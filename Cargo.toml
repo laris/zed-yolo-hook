@@ -1,0 +1,40 @@
+[workspace]
+members = [".", "xtask"]
+
+[package]
+name = "zed-yolo-hook"
+version = "0.1.0"
+edition = "2024"
+description = "YOLO mode for Zed editor — auto-approve AI agent tool calls on macOS via dylib injection"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Frida-gum for function interception (git main for Frida 17.7.3 support)
+frida-gum = { git = "https://github.com/frida/frida-rust", features = ["auto-download", "invocation-listener"] }
+
+# Constructor attribute — runs on dylib load
+ctor = "0.6"
+
+# C types for getpid() FFI
+libc = "0.2"
+
+# Logging (writes to file, not stdout which would interfere with Zed)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# futures oneshot channel — same version as Zed uses
+futures-channel = "0.3"
+
+# Shared hook registry for multi-hook coordination
+dylib-hook-registry = { path = "/Users/lqiao/codes/dylib-kit/crates/dylib-hook-registry" }
+
+[profile.release]
+strip = true          # Remove debug symbols + symbol table
+lto = true            # Link-time optimization — eliminates dead code across crates
+codegen-units = 1     # Single codegen unit — better optimization, slower compile
+opt-level = "z"       # Optimize for size (smallest binary)
+panic = "abort"       # No unwinding tables — saves ~30KB
+
