@@ -7,6 +7,11 @@ This is implemented as a Rust `cdylib` injected into Zed's `zed` binary and two 
 - `AcpThread::request_tool_call_authorization` (ACP agents)
 - `ToolPermissionDecision::from_input` (native tool permissions; enabled in default allow-all mode)
 
+## Related Repositories
+
+- `dylib-kit`: https://github.com/laris/dylib-kit
+- `zed-project-workspace`: https://github.com/laris/zed-project-workspace
+
 ## Modes
 
 `ZED_YOLO_MODE` controls which hooks are installed:
@@ -29,6 +34,16 @@ cargo patch restore
 ```
 
 For the full workflow (stable builds, custom app paths, dry-run inject), see `docs/02_yolo_quickstart.md`.
+
+## How This Repo Uses dylib-kit
+
+This repo uses `dylib-kit` in `xtask`:
+
+1. `dylib-patcher` provides patch/restore/codesign/verify command flow.
+2. `dylib-hook-registry` tracks hook metadata and supports multi-hook coexistence.
+3. `cargo patch` command behavior is delegated to the shared SDK CLI.
+
+This keeps `zed-yolo-hook` focused on hook behavior instead of maintaining separate patch scripts.
 
 ## Safety
 
