@@ -1,9 +1,12 @@
 //! Hook for `AcpThread::request_tool_call_authorization` (external ACP agents).
 //!
 //! After the original function creates a oneshot channel and stores `respond_tx`
-//! in `AcpThread.entries`, we walk the entries Vec to find it, then schedule
-//! sending `PermissionOptionId("allow")` via `dispatch_async_f` on the main queue
-//! (to avoid re-entrancy).
+//! in `AcpThread.entries`, we walk the entries Vec to find it, then send
+//! `PermissionOptionId("allow")` directly in `on_leave`.
+//!
+//! Sending inline is safe: `oneshot::Sender::send()` is an atomic write + receiver
+//! wake. The receiver Future is polled later by Zed's async executor — it never
+//! synchronously re-enters `request_tool_call_authorization`.
 //!
 //! Memory layout (from disassembly of Zed v0.226.0 aarch64):
 //!   AcpThread + 0x60 = entries.ptr
@@ -20,12 +23,11 @@
 //!   Then sender+0x20 is atomically set to signal the receiver.
 
 use std::cell::Cell;
-use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use super::TOOL_AUTHORIZATION_COUNT;
-use crate::ffi::dispatch;
 
 // ---- Memory layout offsets (Zed v0.226.0 aarch64) ----
 const ENTRIES_PTR_OFFSET: usize = 0x60; // Vec<AgentThreadEntry>.ptr
@@ -42,16 +44,9 @@ thread_local! {
     static SAVED_SELF: Cell<u64> = const { Cell::new(0) };
 }
 
-// ---- Deferred send via dispatch_async_f ----
+// ---- Inline send helper ----
 
-/// Data passed to the deferred callback.
-struct DeferredSend {
-    respond_tx: u64, // pointer to Sender<PermissionOptionId> on stack/heap
-    count: u64,
-}
-
-/// Deferred callback: reconstruct the oneshot::Sender from the raw Arc pointer
-/// and call .send() using the actual futures-channel Sender API.
+/// Reconstruct the oneshot::Sender from the raw Arc pointer and send "allow".
 ///
 /// The respond_tx value at entry+0x40 is the Arc<Inner<T>> pointer inside the
 /// Sender<PermissionOptionId>. We reconstruct a Sender from it and call .send().
@@ -59,52 +54,38 @@ struct DeferredSend {
 /// Key: Sender<T> is just `{ inner: Arc<Inner<T>> }`. Since we have the Arc pointer,
 /// we can reconstruct the Sender via transmute. We bump the Arc refcount first to
 /// avoid double-free (the entry still holds its copy).
-extern "C" fn deferred_send(ctx: *mut c_void) {
-    let data = unsafe { Box::from_raw(ctx as *mut DeferredSend) };
-    let sender_arc_ptr = data.respond_tx;
-
-    tracing::info!(
-        "tool_authorization #{}: deferred_send executing (sender_arc_ptr={:#x})",
-        data.count, sender_arc_ptr
-    );
-
+///
+/// # Safety
+/// `sender_arc_ptr` must point to a valid Arc<Inner<Sender<Arc<str>>>>.
+unsafe fn send_allow(sender_arc_ptr: u64, count: u64) -> bool {
     // Build PermissionOptionId("allow") — same type as what Zed uses.
     // PermissionOptionId is #[repr(transparent)] around Arc<str>.
     let option_id: Arc<str> = Arc::from("allow");
 
-    // Reconstruct a Sender<Arc<str>> from the raw Arc pointer.
-    // Sender<T> = { inner: Arc<Inner<T>> }, which is a single pointer.
-    //
-    // We must bump the Arc refcount because:
+    // Bump strong refcount: ArcInner.strong is at offset 0
+    // We must bump because:
     // - The entry still holds one Sender (refcount contribution)
     // - We're creating a second Sender from the same Arc
     // - When our Sender drops (after .send()), it decrements refcount
     // - The entry's Sender will also eventually be dropped
-    unsafe {
-        // Bump strong refcount: ArcInner.strong is at offset 0
-        let strong = sender_arc_ptr as *const std::sync::atomic::AtomicUsize;
-        (*strong).fetch_add(1, Ordering::Relaxed);
+    let strong = sender_arc_ptr as *const std::sync::atomic::AtomicUsize;
+    unsafe { (*strong).fetch_add(1, Ordering::Relaxed) };
 
-        // Transmute the Arc pointer into a Sender<Arc<str>>
-        // Sender<T> is repr(Rust) with one field, same layout as the Arc pointer
-        let sender: futures_channel::oneshot::Sender<Arc<str>> =
-            std::mem::transmute(sender_arc_ptr);
+    // Transmute the Arc pointer into a Sender<Arc<str>>
+    // Sender<T> is repr(Rust) with one field, same layout as the Arc pointer
+    let sender: futures_channel::oneshot::Sender<Arc<str>> =
+        unsafe { std::mem::transmute(sender_arc_ptr) };
 
-        tracing::info!("tool_authorization #{}: calling sender.send(\"allow\")", data.count);
-
-        match sender.send(option_id) {
-            Ok(()) => {
-                tracing::info!("tool_authorization #{}: send succeeded!", data.count);
-            }
-            Err(_) => {
-                tracing::warn!("tool_authorization #{}: send failed (receiver dropped?)", data.count);
-            }
+    match sender.send(option_id) {
+        Ok(()) => {
+            tracing::info!("tool_authorization #{count}: send succeeded");
+            true
         }
-        // sender is dropped here, which calls drop_tx:
-        //   sets complete=true, wakes rx_task
+        Err(_) => {
+            tracing::warn!("tool_authorization #{count}: send failed (receiver dropped?)");
+            false
+        }
     }
-
-    tracing::info!("tool_authorization #{}: deferred_send complete", data.count);
 }
 
 // ---- InvocationListener ----
@@ -118,13 +99,14 @@ impl frida_gum::interceptor::InvocationListener for Listener {
     }
 
     fn on_leave(&mut self, _context: frida_gum::interceptor::InvocationContext) {
+        let t0 = Instant::now();
         let count = TOOL_AUTHORIZATION_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         let self_ptr = SAVED_SELF.with(|c| c.get());
 
-        tracing::info!("tool_authorization #{}: on_leave (self={:#x})", count, self_ptr);
+        tracing::debug!("tool_authorization #{count}: on_leave (self={self_ptr:#x})");
 
         if self_ptr == 0 {
-            tracing::warn!("tool_authorization #{}: self_ptr is null, skipping", count);
+            tracing::warn!("tool_authorization #{count}: self_ptr is null, skipping");
             return;
         }
 
@@ -136,25 +118,23 @@ impl frida_gum::interceptor::InvocationListener for Listener {
             (ptr, len)
         };
 
-        tracing::info!(
-            "tool_authorization #{}: entries ptr={:#x}, len={}",
-            count, entries_ptr, entries_len
+        tracing::debug!(
+            "tool_authorization #{count}: entries ptr={entries_ptr:#x}, len={entries_len}"
         );
 
         if entries_ptr == 0 || entries_len == 0 {
-            tracing::warn!("tool_authorization #{}: no entries, skipping", count);
+            tracing::warn!("tool_authorization #{count}: no entries, skipping");
             return;
         }
 
-        // Dump last 3 entries for diagnostic
+        // Dump last 3 entries for diagnostic (debug level only)
         let dump_count = std::cmp::min(3, entries_len as usize);
         for i in (entries_len as usize - dump_count)..entries_len as usize {
             let entry = entries_ptr + (i as u64 * ENTRY_SIZE as u64);
             unsafe {
                 let p = entry as *const u64;
-                tracing::info!(
-                    "tool_authorization #{}: entry[{}] words: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}]",
-                    count, i,
+                tracing::debug!(
+                    "tool_authorization #{count}: entry[{i}] words: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}]",
                     *p, *p.add(1), *p.add(2), *p.add(3),
                     *p.add(4), *p.add(5), *p.add(6), *p.add(7), *p.add(8)
                 );
@@ -168,13 +148,9 @@ impl frida_gum::interceptor::InvocationListener for Listener {
             let discriminant = unsafe { *(entry as *const u64).byte_add(ENTRY_DISCRIMINANT_OFFSET) };
             let status = unsafe { *(entry as *const u64).byte_add(ENTRY_STATUS_OFFSET) };
 
-            // Log last 3 entries' discriminant and status for debugging
-            if i >= entries_len - 3 {
-                tracing::info!(
-                    "tool_authorization #{}: entry[{}] disc={:#x} status={:#x}",
-                    count, i, discriminant, status
-                );
-            }
+            tracing::debug!(
+                "tool_authorization #{count}: entry[{i}] disc={discriminant:#x} status={status:#x}"
+            );
 
             if discriminant != TOOLCALL_VARIANT {
                 continue;
@@ -185,9 +161,8 @@ impl frida_gum::interceptor::InvocationListener for Listener {
                 // Validate respond_tx is a valid heap pointer (not null/garbage)
                 if tx > 0x1_0000_0000 {
                     respond_tx = tx;
-                    tracing::info!(
-                        "tool_authorization #{}: found WaitingForConfirmation at entry[{}], respond_tx={:#x}",
-                        count, i, respond_tx
+                    tracing::debug!(
+                        "tool_authorization #{count}: found WaitingForConfirmation at entry[{i}], respond_tx={respond_tx:#x}"
                     );
                     break;
                 }
@@ -195,27 +170,19 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         }
 
         if respond_tx == 0 {
-            tracing::warn!("tool_authorization #{}: no WaitingForConfirmation entry found", count);
+            tracing::warn!("tool_authorization #{count}: no WaitingForConfirmation entry found");
             return;
         }
 
-        // Schedule sending through respond_tx on the main queue
-        // This avoids re-entrancy — we're outside request_tool_call_authorization's stack
-        let data = Box::new(DeferredSend {
-            respond_tx,
-            count,
-        });
+        // Send directly — no dispatch_async_f needed.
+        // oneshot::Sender::send() is an atomic write + wake; the receiver Future
+        // is polled later by Zed's executor, no re-entrancy risk.
+        let ok = unsafe { send_allow(respond_tx, count) };
+        let elapsed_us = t0.elapsed().as_micros();
 
-        unsafe {
-            let queue = dispatch::get_main_queue();
-            dispatch::dispatch_async_f(
-                queue,
-                Box::into_raw(data) as *mut c_void,
-                deferred_send,
-            );
+        if ok {
+            tracing::info!("tool_authorization #{count}: approved in {elapsed_us}us");
         }
-
-        tracing::info!("tool_authorization #{}: deferred send scheduled", count);
     }
 }
 
