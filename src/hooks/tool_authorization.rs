@@ -8,13 +8,13 @@
 //! wake. The receiver Future is polled later by Zed's async executor — it never
 //! synchronously re-enters `request_tool_call_authorization`.
 //!
-//! Memory layout (from disassembly of Zed v0.226.0 aarch64):
-//!   AcpThread + 0x60 = entries.ptr
-//!   AcpThread + 0x68 = entries.len
+//! Memory layout (from disassembly of Zed v0.227.0 aarch64):
+//!   AcpThread + 0x78 = entries.ptr
+//!   AcpThread + 0x80 = entries.len
 //!   Each entry = 0x1b0 (432) bytes
 //!   entry[0x00] = discriminant (0x7 = ToolCall)
-//!   entry[0x20] = ToolCallStatus discriminant (0x1 = WaitingForConfirmation)
-//!   entry[0x40] = respond_tx (pointer to oneshot::Sender on heap)
+//!   entry[0x48] = ToolCallStatus discriminant (0x1 = WaitingForConfirmation)
+//!   entry[0x68] = respond_tx (pointer to oneshot::Sender on heap)
 //!
 //! oneshot::Sender internal layout (futures 0.3):
 //!   sender+0x20 = lock (atomic u8)
@@ -29,13 +29,13 @@ use std::time::Instant;
 
 use super::TOOL_AUTHORIZATION_COUNT;
 
-// ---- Memory layout offsets (Zed v0.226.0 aarch64) ----
-const ENTRIES_PTR_OFFSET: usize = 0x60; // Vec<AgentThreadEntry>.ptr
-const ENTRIES_LEN_OFFSET: usize = 0x68; // Vec<AgentThreadEntry>.len
+// ---- Memory layout offsets (Zed v0.227.0 aarch64) ----
+const ENTRIES_PTR_OFFSET: usize = 0x78; // Vec<AgentThreadEntry>.ptr
+const ENTRIES_LEN_OFFSET: usize = 0x80; // Vec<AgentThreadEntry>.len
 const ENTRY_SIZE: usize = 0x1b0;        // sizeof(AgentThreadEntry) = 432 bytes
 const ENTRY_DISCRIMINANT_OFFSET: usize = 0x00; // AgentThreadEntry variant tag
-const ENTRY_STATUS_OFFSET: usize = 0x20; // ToolCallStatus within ToolCall
-const ENTRY_RESPOND_TX_OFFSET: usize = 0x40; // respond_tx ptr within WaitingForConfirmation
+const ENTRY_STATUS_OFFSET: usize = 0x48; // ToolCallStatus within ToolCall
+const ENTRY_RESPOND_TX_OFFSET: usize = 0x68; // respond_tx ptr within WaitingForConfirmation
 const TOOLCALL_VARIANT: u64 = 0x07;     // AgentThreadEntry::ToolCall discriminant
 const WAITING_VARIANT: u64 = 0x00;      // ToolCallStatus::WaitingForConfirmation (niche-optimized)
 
@@ -48,7 +48,7 @@ thread_local! {
 
 /// Reconstruct the oneshot::Sender from the raw Arc pointer and send "allow".
 ///
-/// The respond_tx value at entry+0x40 is the Arc<Inner<T>> pointer inside the
+/// The respond_tx value at entry+0x68 is the Arc<Inner<T>> pointer inside the
 /// Sender<PermissionOptionId>. We reconstruct a Sender from it and call .send().
 ///
 /// Key: Sender<T> is just `{ inner: Arc<Inner<T>> }`. Since we have the Arc pointer,
@@ -128,15 +128,15 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         }
 
         // Dump last 3 entries for diagnostic (debug level only)
+        // Key offsets: disc=0x00(w0), status=0x48(w9), respond_tx=0x68(w13)
         let dump_count = std::cmp::min(3, entries_len as usize);
         for i in (entries_len as usize - dump_count)..entries_len as usize {
             let entry = entries_ptr + (i as u64 * ENTRY_SIZE as u64);
             unsafe {
                 let p = entry as *const u64;
                 tracing::debug!(
-                    "tool_authorization #{count}: entry[{i}] words: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}]",
-                    *p, *p.add(1), *p.add(2), *p.add(3),
-                    *p.add(4), *p.add(5), *p.add(6), *p.add(7), *p.add(8)
+                    "tool_authorization #{count}: entry[{i}] disc={:#x} status(w9)={:#x} respond_tx(w13)={:#x}",
+                    *p, *p.add(9), *p.add(13)
                 );
             }
         }

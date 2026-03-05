@@ -53,7 +53,7 @@ The same `libzed_yolo_hook.dylib` works for both apps — no rebuild needed:
 
 | App | Path | Bundle ID | Verified versions |
 |-----|------|-----------|-------------------|
-| Zed Preview | `/Applications/Zed Preview.app` | `dev.zed.Zed-Preview` | v0.226.0 |
+| Zed Preview | `/Applications/Zed Preview.app` | `dev.zed.Zed-Preview` | v0.226.0, v0.227.0 |
 | Zed Stable | `/Applications/Zed.app` | `dev.zed.Zed` | v0.225.9 |
 
 Both use identical struct layout offsets (verified via disassembly).
@@ -82,8 +82,8 @@ otool -tv -p __RNvMsk_Cs..._10acp_threadNtB5_9AcpThread19authorize_tool_call \
 ```
 
 Look for:
-- `ldr x9, [x0, #0xNN]` — entries.ptr offset (currently 0x60)
-- `ldr x8, [x0, #0xMM]` — entries.len offset (currently 0x68)
+- `ldr x9, [x0, #0xNN]` — entries.ptr offset (currently 0x78)
+- `ldr x8, [x0, #0xMM]` — entries.len offset (currently 0x80)
 - `mov wN, #0xSIZE` — entry size (currently 0x1b0)
 - `cmp x8, #0xVAR` — ToolCall variant discriminant (currently 0x7)
 
@@ -100,9 +100,9 @@ The offsets used here are:
 ### Step 4: Find status and respond_tx offsets
 
 After the memcmp match, look for:
-- `ldp q0, q1, [x25, #STATUS_OFF]` — old status load (currently 0x20)
+- `ldur q0, [x25, #STATUS_OFF]` — old status load (currently 0x48)
 - `str x8, [x25, #STATUS_OFF]` — new status write
-- `ldr x23, [sp, #0x40]` after `ldr x9, [x25, #TX_OFF]` — respond_tx (currently 0x40)
+- `ldr x9, [x25, #TX_OFF]` — respond_tx (currently 0x68)
 
 ### Step 5: Find WaitingForConfirmation discriminant
 
@@ -115,11 +115,11 @@ Look for:
 Edit `src/hooks/tool_authorization.rs` and update:
 
 ```rust
-const ENTRIES_PTR_OFFSET: usize = 0x60;  // from Step 2
-const ENTRIES_LEN_OFFSET: usize = 0x68;  // from Step 2
+const ENTRIES_PTR_OFFSET: usize = 0x78;  // from Step 2
+const ENTRIES_LEN_OFFSET: usize = 0x80;  // from Step 2
 const ENTRY_SIZE: usize = 0x1b0;         // from Step 2
-const ENTRY_STATUS_OFFSET: usize = 0x20; // from Step 4
-const ENTRY_RESPOND_TX_OFFSET: usize = 0x40; // from Step 4
+const ENTRY_STATUS_OFFSET: usize = 0x48; // from Step 4
+const ENTRY_RESPOND_TX_OFFSET: usize = 0x68; // from Step 4
 const TOOLCALL_VARIANT: u64 = 0x07;      // from Step 2
 const WAITING_VARIANT: u64 = 0x00;       // from Step 5
 ```
