@@ -53,10 +53,10 @@ The same `libzed_yolo_hook.dylib` works for both apps — no rebuild needed:
 
 | App | Path | Bundle ID | Verified versions |
 |-----|------|-----------|-------------------|
-| Zed Preview | `/Applications/Zed Preview.app` | `dev.zed.Zed-Preview` | v0.226.0, v0.227.0 |
+| Zed Preview | `/Applications/Zed Preview.app` | `dev.zed.Zed-Preview` | v0.226.0, v0.227.0, v0.228.0 |
 | Zed Stable | `/Applications/Zed.app` | `dev.zed.Zed` | v0.225.9 |
 
-Both use identical struct layout offsets (verified via disassembly).
+Note: struct layout offsets differ across Zed versions. Each version requires disassembly verification (see docs 10, 11).
 
 ---
 
@@ -82,8 +82,8 @@ otool -tv -p __RNvMsk_Cs..._10acp_threadNtB5_9AcpThread19authorize_tool_call \
 ```
 
 Look for:
-- `ldr x9, [x0, #0xNN]` — entries.ptr offset (currently 0x78)
-- `ldr x8, [x0, #0xMM]` — entries.len offset (currently 0x80)
+- `ldr x9, [x0, #0xNN]` — entries.ptr offset (currently 0x90)
+- `ldr x8, [x0, #0xMM]` — entries.len offset (currently 0x98)
 - `mov wN, #0xSIZE` — entry size (currently 0x1b0)
 - `cmp x8, #0xVAR` — ToolCall variant discriminant (currently 0x7)
 
@@ -115,8 +115,8 @@ Look for:
 Edit `src/hooks/tool_authorization.rs` and update:
 
 ```rust
-const ENTRIES_PTR_OFFSET: usize = 0x78;  // from Step 2
-const ENTRIES_LEN_OFFSET: usize = 0x80;  // from Step 2
+const ENTRIES_PTR_OFFSET: usize = 0x90;  // from Step 2
+const ENTRIES_LEN_OFFSET: usize = 0x98;  // from Step 2
 const ENTRY_SIZE: usize = 0x1b0;         // from Step 2
 const ENTRY_STATUS_OFFSET: usize = 0x48; // from Step 4
 const ENTRY_RESPOND_TX_OFFSET: usize = 0x68; // from Step 4

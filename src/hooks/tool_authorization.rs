@@ -8,9 +8,9 @@
 //! wake. The receiver Future is polled later by Zed's async executor — it never
 //! synchronously re-enters `request_tool_call_authorization`.
 //!
-//! Memory layout (from disassembly of Zed v0.227.0 aarch64):
-//!   AcpThread + 0x78 = entries.ptr
-//!   AcpThread + 0x80 = entries.len
+//! Memory layout (from disassembly of Zed v0.228.0 aarch64):
+//!   AcpThread + 0x90 = entries.ptr
+//!   AcpThread + 0x98 = entries.len
 //!   Each entry = 0x1b0 (432) bytes
 //!   entry[0x00] = discriminant (0x7 = ToolCall)
 //!   entry[0x48] = ToolCallStatus discriminant (0x1 = WaitingForConfirmation)
@@ -29,9 +29,9 @@ use std::time::Instant;
 
 use super::TOOL_AUTHORIZATION_COUNT;
 
-// ---- Memory layout offsets (Zed v0.227.0 aarch64) ----
-const ENTRIES_PTR_OFFSET: usize = 0x78; // Vec<AgentThreadEntry>.ptr
-const ENTRIES_LEN_OFFSET: usize = 0x80; // Vec<AgentThreadEntry>.len
+// ---- Memory layout offsets (Zed v0.228.0 aarch64) ----
+const ENTRIES_PTR_OFFSET: usize = 0x90; // Vec<AgentThreadEntry>.ptr
+const ENTRIES_LEN_OFFSET: usize = 0x98; // Vec<AgentThreadEntry>.len
 const ENTRY_SIZE: usize = 0x1b0;        // sizeof(AgentThreadEntry) = 432 bytes
 const ENTRY_DISCRIMINANT_OFFSET: usize = 0x00; // AgentThreadEntry variant tag
 const ENTRY_STATUS_OFFSET: usize = 0x48; // ToolCallStatus within ToolCall
