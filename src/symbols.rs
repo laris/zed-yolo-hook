@@ -17,7 +17,8 @@ pub fn find_by_pattern(
 ) -> Option<(String, NativePointer)> {
     tracing::info!(
         "Searching for symbol matching {:?} (excluding {:?})",
-        include, exclude
+        include,
+        exclude
     );
 
     for export in module.enumerate_exports() {
@@ -25,10 +26,7 @@ pub fn find_by_pattern(
         if include.iter().all(|pat| name.contains(pat))
             && exclude.iter().all(|pat| !name.contains(pat))
         {
-            return Some((
-                name.clone(),
-                NativePointer(export.address as *mut c_void),
-            ));
+            return Some((name.clone(), NativePointer(export.address as *mut c_void)));
         }
     }
 
@@ -38,10 +36,7 @@ pub fn find_by_pattern(
         if include.iter().all(|pat| name.contains(pat))
             && exclude.iter().all(|pat| !name.contains(pat))
         {
-            return Some((
-                name.clone(),
-                NativePointer(sym.address as *mut c_void),
-            ));
+            return Some((name.clone(), NativePointer(sym.address as *mut c_void)));
         }
     }
 

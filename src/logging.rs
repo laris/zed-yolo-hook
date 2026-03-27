@@ -32,8 +32,5 @@ pub fn init() {
         )
         .try_init();
 
-    tracing::info!(
-        "Logs: {}/zed-yolo-hook.*.log",
-        log_dir.display()
-    );
+    tracing::info!("Logs: {}/zed-yolo-hook.*.log", log_dir.display());
 }

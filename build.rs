@@ -43,9 +43,7 @@ fn main() {
 
         // Fallback 2: ~/Downloads/frida/
         let home = std::env::var("HOME").unwrap_or_default();
-        let downloads_tarball = PathBuf::from(&home)
-            .join("Downloads/frida")
-            .join(&tarball);
+        let downloads_tarball = PathBuf::from(&home).join("Downloads/frida").join(&tarball);
         if downloads_tarball.exists() {
             println!(
                 "cargo:warning=Copying Frida devkit from {} to cache",
@@ -59,9 +57,8 @@ fn main() {
         }
 
         // Fallback 3: download from GitHub
-        let url = format!(
-            "https://github.com/frida/frida/releases/download/{FRIDA_VERSION}/{tarball}"
-        );
+        let url =
+            format!("https://github.com/frida/frida/releases/download/{FRIDA_VERSION}/{tarball}");
         println!("cargo:warning=Downloading Frida devkit from {url}");
         let _ = std::fs::create_dir_all(&cache_dir);
 
@@ -94,11 +91,10 @@ fn main() {
 
 /// Find the frida-gum-sys source directory in Cargo's git checkout or registry.
 fn find_frida_gum_sys_dir() -> Option<PathBuf> {
-    let cargo_home = std::env::var("CARGO_HOME")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            format!("{home}/.cargo")
-        });
+    let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/.cargo")
+    });
 
     // Git checkout (when using git dependency)
     let git_checkouts = PathBuf::from(&cargo_home).join("git/checkouts");
@@ -145,10 +141,7 @@ fn extract_tarball(tarball: &Path, dest: &Path) {
 
     match status {
         Ok(s) if s.success() => {
-            println!(
-                "cargo:warning=Extracted Frida devkit to {}",
-                dest.display()
-            );
+            println!("cargo:warning=Extracted Frida devkit to {}", dest.display());
         }
         _ => {
             println!(

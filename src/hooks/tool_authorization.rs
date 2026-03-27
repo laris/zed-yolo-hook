@@ -24,8 +24,8 @@
 use agent_client_protocol as acp;
 use std::cell::Cell;
 use std::slice;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use super::TOOL_AUTHORIZATION_COUNT;

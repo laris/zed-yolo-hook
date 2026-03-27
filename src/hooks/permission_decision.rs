@@ -24,7 +24,11 @@ impl frida_gum::interceptor::InvocationListener for Listener {
             unsafe {
                 std::ptr::write_bytes(x8 as *mut u8, 0, 32);
             }
-            tracing::info!("permission_decision #{}: from_input → Allow (x8={:#x})", count, x8);
+            tracing::info!(
+                "permission_decision #{}: from_input → Allow (x8={:#x})",
+                count,
+                x8
+            );
         } else {
             context.set_return_value(0);
             tracing::info!("permission_decision #{}: from_input → Allow (x0)", count);
