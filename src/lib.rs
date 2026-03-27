@@ -6,7 +6,8 @@
 //!    to always return `Allow` (built-in tools).
 //!
 //! 2. `tool_authorization` — hooks `AcpThread::request_tool_call_authorization`
-//!    to auto-send "allow" through the oneshot channel (external ACP agents).
+//!    to auto-send the matching ACP allow outcome through the oneshot channel
+//!    (external ACP agents).
 //!
 //! In `ZED_YOLO_MODE=allow_safe`, only the ACP hook is enabled.
 
@@ -108,9 +109,13 @@ fn register_in_registry(mode: &config::YoloMode) {
         .ok()
         .and_then(|exe| {
             let s = exe.to_string_lossy().to_string();
-            if s.contains("Zed Preview") { Some("zed-preview".to_string()) }
-            else if s.contains("Zed.app") { Some("zed-stable".to_string()) }
-            else { None }
+            if s.contains("Zed Preview") {
+                Some("zed-preview".to_string())
+            } else if s.contains("Zed.app") {
+                Some("zed-stable".to_string())
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| "zed".to_string());
 

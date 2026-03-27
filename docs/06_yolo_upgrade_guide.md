@@ -1,267 +1,280 @@
-# YOLO Hook Upgrade Guide: Handling Zed Updates & API Changes
+# YOLO Hook Upgrade Guide: Zed Updates, Re-Patching, and Offset Drift
 
-> Date: 2026-02-26
-> For: zed-yolo-hook v0.17.1+
-> Target: Zed Preview macOS aarch64
-
----
-
-## 1. When Do You Need to Re-hook?
-
-| Event | Re-inject needed? | Re-calibrate offsets? |
-|-------|-------------------|----------------------|
-| Zed auto-update | YES — binary replaced | MAYBE — if AcpThread struct changed |
-| Zed major version (0.227+) | YES | LIKELY |
-| macOS update | NO (unless SIP re-enabled) | NO |
-| Rebuild dylib only | NO — same path | NO |
-| Rust toolchain update for Zed | YES (if binary changes) | LIKELY — field reordering may change |
+> Date: 2026-02-26, updated 2026-03-27
+> Target: Zed Preview on macOS aarch64
+> Deep binary notes: `docs/11_offset_recalibration_v0.228.0.md`, `docs/12_offset_recalibration_v0.230.0.md`
 
 ---
 
-## 2. Quick Re-inject After Zed Update
+## 1. When Do You Need to Re-Patch?
 
-Zed auto-updates replace the binary, removing `LC_LOAD_WEAK_DYLIB`. Re-inject:
+| Event | Re-patch app bundle? | Re-check binary offsets? |
+|-------|-----------------------|--------------------------|
+| Zed auto-update | YES | YES |
+| Zed Preview minor/major version bump | YES | YES |
+| Rebuild hook only, same app binary | NO, if the app already points at the same dylib path | MAYBE |
+| Local code changes to hook logic | NO binary rewrite required if already injected at the same path, but restart/relaunch is needed to load the new dylib | MAYBE |
+| macOS update only | usually NO | usually NO |
+
+The current patcher workflow is packaged behind `cargo patch`.
+
+---
+
+## 2. Fast Workflow
+
+### Recommended full flow
 
 ```bash
-# 1. Quit Zed
-osascript -e 'quit app "Zed Preview"' 2>/dev/null; sleep 1
-osascript -e 'quit app "Zed"' 2>/dev/null; sleep 1
-
-# 2. Re-inject
 cd /path/to/zed-yolo-hook
 
-# Zed Preview:
+# Build + patch + sign + relaunch + startup verification
+cargo patch --verify
+```
+
+### Common variants
+
+```bash
+# Preview, build + patch + relaunch
 cargo patch
 
-# Zed Stable:
+# Stable instead of Preview
 cargo patch --stable
 
-# If you want to skip the build step, pass a pre-built dylib:
-#   cargo patch --dylib target/release/libzed_yolo_hook.dylib
+# Use an already-built dylib
+cargo patch --no-build
 
-# 3. Relaunch
-open "/Applications/Zed Preview.app"  # or Zed.app
-
-# 4. Verify
-tail -5 ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log
-# Should show "=== zed-yolo-hook vX.Y.Z ===" and "YOLO mode ACTIVE"
+# Restore the original binary from zed.original
+cargo patch restore
 ```
 
-### Supported Apps
+The current `xtask` targets:
 
-The same `libzed_yolo_hook.dylib` works for both apps — no rebuild needed:
+- Preview: `/Applications/Zed Preview.app`
+- Stable: `/Applications/Zed.app`
 
-| App | Path | Bundle ID | Verified versions |
-|-----|------|-----------|-------------------|
-| Zed Preview | `/Applications/Zed Preview.app` | `dev.zed.Zed-Preview` | v0.226.0, v0.227.0, v0.228.0 |
-| Zed Stable | `/Applications/Zed.app` | `dev.zed.Zed` | v0.225.9 |
-
-Note: struct layout offsets differ across Zed versions. Each version requires disassembly verification (see docs 10, 11).
+It does not currently expose the old custom `--zed-app` override mentioned in some older notes.
 
 ---
 
-## 3. How to Detect if Offsets Changed
+## 3. Current Known-Good Preview 0.230.0 Facts
 
-If after re-inject the hook logs `no WaitingForConfirmation entry found` or crashes, the struct offsets have changed. Diagnosis:
+Installed app under test on 2026-03-27:
 
-### Step 1: Check symbol exists
+- Bundle id: `dev.zed.Zed-Preview`
+- app version: `0.230.0`
+- build string:
+  `0.230.0+preview.205.9437a84390a396d666f04b38db87d89bb07284c1`
+- bundle build:
+  `20260325.153514`
 
-```bash
-nm "/Applications/Zed Preview.app/Contents/MacOS/zed" | \
-  grep 'request_tool_call_authorization' | grep -v drop | grep -v closure | grep -v spawn
+Current binary-derived ACP constants for this build:
+
+| Item | Value |
+|------|-------|
+| `AcpThread.entries.ptr` | `self + 0x90` |
+| `AcpThread.entries.len` | `self + 0x98` |
+| `sizeof(AgentThreadEntry)` | `0x1c0` |
+| `AgentThreadEntry::ToolCall` discriminant | `0x02` |
+| `ToolCall.status` offset | `0x118` |
+| `respond_tx` offset | `0x160` |
+| `ToolCall.id.ptr/len` | `0x168 / 0x170` |
+| `ToolCallUpdate.id.ptr/len` | `0x128 / 0x130` |
+| waiting-state test | `status_head < 0x8000_0000_0000_0002` |
+
+Do not reuse the old `v0.226.x / v0.228.x` assumptions (`ToolCall = 0x07`, `Waiting = 0x00`)
+for this build.
+
+---
+
+## 4. How to Tell What Broke
+
+### Case A — patching/injection problem
+
+Symptoms:
+
+- `cargo patch --verify` fails
+- `otool -L /Applications/Zed Preview.app/Contents/MacOS/zed` does not show
+  `libzed_yolo_hook.dylib`
+- no fresh `=== zed-yolo-hook v... ===` log appears after launch
+
+Likely causes:
+
+- app bundle replaced by update
+- signing failed
+- patch was restored or overwritten
+
+### Case B — dylib loads, but ACP hook logic is stale
+
+Symptoms:
+
+- fresh log shows:
+  - `permission_decision: hook installed`
+  - `tool_authorization: hook installed`
+  - `YOLO mode ACTIVE`
+- but ACP requests log:
+  - `tool_authorization #N: no WaitingForConfirmation entry found`
+
+Likely cause:
+
+- binary layout drift
+- or waiting-state / `ToolCallId` matching logic is stale
+
+This was the exact failure mode observed on 2026-03-27 before the final Preview `0.230.0` fix.
+
+### Case C — hook loads, no ACP warnings, but no success line either
+
+Symptoms:
+
+- startup markers are present
+- no fresh `no WaitingForConfirmation` warning
+- but also no:
+  - `matched v0.230.x entry`
+  - `send succeeded`
+  - `approved in ...`
+
+Likely cause:
+
+- no external-agent tool permission request has fired since launch
+
+That means patching is probably fine, but the ACP path has not been exercised yet.
+
+---
+
+## 5. Current Recalibration Procedure
+
+When Preview updates and ACP approvals break, use this order:
+
+### Step 1 — confirm the source call path
+
+Read these files in the local Zed checkout:
+
+- `crates/agent_servers/src/acp.rs`
+- `crates/acp_thread/src/acp_thread.rs`
+- `crates/agent_ui/src/conversation_view.rs`
+
+The important control flow is:
+
+```text
+request_permission
+  -> request_tool_call_authorization
+     -> WaitingForConfirmation { options, respond_tx }
+
+authorize_tool_call
+  -> tool_call_mut(id)
+  -> respond_tx.send(outcome)
 ```
 
-If the symbol name changed, update the `SYMBOL_INCLUDE` patterns in `src/hooks/tool_authorization.rs`.
+This tells you what the hook must mimic.
 
-### Step 2: Disassemble authorize_tool_call
+### Step 2 — inspect the installed app binary
+
+Useful commands:
 
 ```bash
-# Find the entries offset
-otool -tv -p __RNvMsk_Cs..._10acp_threadNtB5_9AcpThread19authorize_tool_call \
-  "/Applications/Zed Preview.app/Contents/MacOS/zed" | head -30
+nm -nm "/Applications/Zed Preview.app/Contents/MacOS/zed" | \
+  grep 'AcpThread31request_tool_call_authorization\|AcpThread19authorize_tool_call\|ToolPermissionDecision10from_input'
+
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread31request_tool_call_authorization' \
+  "/Applications/Zed Preview.app/Contents/MacOS/zed"
+
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread19authorize_tool_call' \
+  "/Applications/Zed Preview.app/Contents/MacOS/zed"
+
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread22upsert_tool_call_inner' \
+  "/Applications/Zed Preview.app/Contents/MacOS/zed"
 ```
 
-Look for:
-- `ldr x9, [x0, #0xNN]` — entries.ptr offset (currently 0x90)
-- `ldr x8, [x0, #0xMM]` — entries.len offset (currently 0x98)
-- `mov wN, #0xSIZE` — entry size (currently 0x1b0)
-- `cmp x8, #0xVAR` — ToolCall variant discriminant (currently 0x7)
+Use those to recover:
 
-### Step 3: Disassemble the matching loop
+- entry size
+- `entries.ptr` / `entries.len`
+- `ToolCall.status` offset
+- `respond_tx` offset
+- entry `ToolCallId` offsets
+- `ToolCallUpdate.tool_call_id` offsets
+- waiting-state encoding
 
-Look for the `memcmp` call pattern:
-- `ldr x8, [x25, #OFFSET_A]` then `cmp x8, x23` — status/id length comparison
-- `ldr x8, [x25, #OFFSET_B]` then `add x0, x8, #0x10` — ArcInner ptr + 16 = string data
+### Step 3 — update the hook code
 
-The offsets used here are:
-- `OFFSET_A` = where ToolCallId.len is in the entry (currently 0x128)
-- `OFFSET_B` = where ToolCallId.ptr is in the entry (currently 0x120)
+Current `v0.230.x` strategy in `src/hooks/tool_authorization.rs`:
 
-### Step 4: Find status and respond_tx offsets
+1. capture `ToolCallId` in `on_enter`
+2. walk `self.entries` in `on_leave`
+3. match exact `ToolCallId`
+4. validate waiting-state via niche-aware status test
+5. validate `respond_tx` looks like an `Arc`
+6. reconstruct the real `oneshot::Sender<SelectedPermissionOutcome>`
+7. send `AllowOnce`
 
-After the memcmp match, look for:
-- `ldur q0, [x25, #STATUS_OFF]` — old status load (currently 0x48)
-- `str x8, [x25, #STATUS_OFF]` — new status write
-- `ldr x9, [x25, #TX_OFF]` — respond_tx (currently 0x68)
+If the ACP payload type changes again, update:
 
-### Step 5: Find WaitingForConfirmation discriminant
+- `Cargo.toml`
+- the local shim type / layout assertions in `src/hooks/tool_authorization.rs`
 
-Look for:
-- `cmp x22, #VALUE` with `b.hi` — values <= this are WaitingForConfirmation
-- Currently `cmp x22, #0x1` meaning values 0 and 1 are valid
+### Step 4 — rebuild and patch
 
-### Step 6: Update constants
+```bash
+cargo check
+cargo build --release
+cargo patch --verify
+```
 
-Edit `src/hooks/tool_authorization.rs` and update:
+### Step 5 — read the logs in order
 
-```rust
-const ENTRIES_PTR_OFFSET: usize = 0x90;  // from Step 2
-const ENTRIES_LEN_OFFSET: usize = 0x98;  // from Step 2
-const ENTRY_SIZE: usize = 0x1b0;         // from Step 2
-const ENTRY_STATUS_OFFSET: usize = 0x48; // from Step 4
-const ENTRY_RESPOND_TX_OFFSET: usize = 0x68; // from Step 4
-const TOOLCALL_VARIANT: u64 = 0x07;      // from Step 2
-const WAITING_VARIANT: u64 = 0x00;       // from Step 5
+```bash
+tail -n 80 ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log
+```
+
+Interpretation:
+
+- `hook installed` + `YOLO mode ACTIVE`:
+  patch and load path good
+- `no WaitingForConfirmation entry found`:
+  ACP layout still wrong
+- `matched v0.230.x entry` + `send succeeded` + `approved in ... via v0.230.x`:
+  ACP path confirmed working on the new build
+
+This exact success sequence was observed on 2026-03-27 after the final Preview `0.230.0`
+recalibration.
+
+---
+
+## 6. Validation Commands
+
+### Check injection
+
+```bash
+otool -L "/Applications/Zed Preview.app/Contents/MacOS/zed" | \
+  grep 'libzed_yolo_hook\.dylib'
+```
+
+### Check patch registry
+
+```bash
+cargo patch status
+```
+
+### Check startup markers
+
+```bash
+grep -E 'hook installed|YOLO mode ACTIVE' \
+  ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log | tail -20
+```
+
+### Check ACP approval path
+
+```bash
+grep -E 'tool_authorization #|matched v0\.230\.x entry|send succeeded|approved in|no WaitingForConfirmation' \
+  ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log | tail -40
 ```
 
 ---
 
-## 4. What If the Code Architecture Changes?
+## 7. Notes
 
-### Scenario: `request_tool_call_authorization` renamed or removed
-
-Search for similar symbols:
-
-```bash
-nm "/Applications/Zed Preview.app/Contents/MacOS/zed" | grep -i 'authorization\|permission\|tool_call' | grep -v drop | head -20
-```
-
-The function must:
-1. Create a `oneshot::channel()`
-2. Store `respond_tx` in a `WaitingForConfirmation`-like status
-3. Return a future wrapping `rx`
-
-### Scenario: oneshot channel replaced with different async primitive
-
-If `futures::channel::oneshot` is replaced (e.g., with tokio's oneshot), the `transmute` into `Sender` won't work. You'd need to:
-1. Identify the new channel type
-2. Add the correct crate dependency
-3. Adjust the transmute target type
-
-### Scenario: PermissionOptions format changes
-
-The `option_id: "allow"` string might change. Check:
-
-```bash
-grep -r 'PermissionOptionId.*new.*"allow"' /path/to/zed/source/crates/agent/
-```
-
-### Scenario: `ToolCallStatus` enum variants change
-
-Re-disassemble `authorize_tool_call` and look for the discriminant comparison after entry matching. The `cmp` instruction reveals the new WaitingForConfirmation value.
-
----
-
-## 5. Automated Offset Calibration (Future Improvement)
-
-Instead of hardcoded offsets, the hook could self-calibrate:
-
-### Strategy 1: Disassemble at runtime
-
-Use Frida's `Instruction` API to disassemble `authorize_tool_call` at load time, find the `ldr` patterns, and extract offsets automatically.
-
-```rust
-// Pseudocode
-let instructions = frida_gum::disassemble(authorize_fn_ptr, 100);
-for insn in instructions {
-    if insn.is_ldr() && insn.base_reg() == "x0" {
-        // Found entries offset
-    }
-}
-```
-
-### Strategy 2: Pattern scanning
-
-Scan for specific byte patterns in the function prologue:
-
-```rust
-// Pattern: ldr x9, [x0, #IMM]  followed by  ldr x8, [x0, #IMM+8]
-// This gives us entries.ptr and entries.len offsets
-```
-
-### Strategy 3: Signature-based entry detection
-
-Instead of hardcoded `TOOLCALL_VARIANT` and `WAITING_VARIANT`, scan entries for heuristics:
-- Entry has a heap pointer at known-ish offset (respond_tx is always a heap ptr)
-- Entry has a `WaitingForConfirmation` look (contains valid Arc pointer at respond_tx offset)
-- The last entry is likely the one just created by `request_tool_call_authorization`
-
-### Strategy 4: Hook oneshot::channel instead
-
-Instead of walking entries, hook `futures::channel::oneshot::channel::<PermissionOptionId>()` to intercept `tx` at creation time:
-
-```
-channel() → returns (Sender, Receiver)
-```
-
-Save the Sender, then in `on_leave` of `request_tool_call_authorization`, use the saved Sender to send directly. This avoids ALL struct offset dependencies.
-
-Challenge: `channel()` is generic and may be inlined.
-
----
-
-## 6. Build & Deploy Checklist
-
-```bash
-# 1. Quit Zed
-osascript -e 'quit app "Zed Preview"' 2>/dev/null; sleep 1
-osascript -e 'quit app "Zed"' 2>/dev/null; sleep 1
-
-# 2. Build + inject
-cd /path/to/zed-yolo-hook
-cargo patch   # or: cargo patch --stable
-
-# 3. Launch
-open "/Applications/Zed Preview.app"  # or Zed.app
-
-# 4. Verify (in another terminal)
-sleep 3 && tail -20 ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log
-```
-
----
-
-## 7. Debugging Tips
-
-### Check if hook loaded
-```bash
-grep "YOLO mode ACTIVE" ~/Library/Logs/Zed/zed-yolo-hook.*
-```
-
-### Check if tool_authorization hook fired
-```bash
-grep "tool_authorization #" ~/Library/Logs/Zed/zed-yolo-hook.* | tail -10
-```
-
-### Check send status
-```bash
-grep "send" ~/Library/Logs/Zed/zed-yolo-hook.* | tail -10
-# "send succeeded!" = working
-# "send failed" = receiver already dropped (race condition)
-# No "send" line = entry not found (offset mismatch)
-```
-
-### Memory dump analysis
-
-If offsets seem wrong, the entry dump lines show raw words:
-```
-entry[N] words: [disc, field1, field2, field3, status_at_0x20, field5, field6, field7, respond_tx_at_0x40]
-```
-
-Map word indices to byte offsets: `word[i]` = offset `i * 8` from entry start.
-
-### Restore original binary
-```bash
-cp "/Applications/Zed Preview.app/Contents/MacOS/zed.original" \
-   "/Applications/Zed Preview.app/Contents/MacOS/zed"
-codesign -fs - --deep "/Applications/Zed Preview.app"
-```
+1. The local source checkout can lag the installed Preview build. When they diverge, trust the
+   binary for offsets and enum layout.
+2. Startup verification is necessary but not sufficient. It proves the dylib loads, not that ACP
+   approval succeeded.
+3. Keep `docs/12_offset_recalibration_v0.230.0.md` as the authoritative note for the current
+   Preview generation.

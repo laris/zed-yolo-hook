@@ -1,13 +1,158 @@
 # YOLO Hook Implementation Log & Methodology
 
-> Date: 2026-02-26
-> Final working version: v0.17.1
-> Target: Zed Preview v0.226.0 + Zed Stable v0.225.9, macOS aarch64 (Apple Silicon)
-> Compatibility: Same dylib binary works for both Zed Stable and Preview (identical struct offsets)
+> Date: 2026-02-26, updated 2026-03-27
+> Historical working version: v0.17.1 on Zed Preview v0.226.0 / Zed Stable v0.225.9
+> Current recalibration pass: Preview v0.230.0
+> Latest patch verification: `cargo patch --verify` passed on 2026-03-27
 
 ---
 
-## 1. Final Working Architecture (v0.17.1)
+## 1. 2026-03-27 Recalibration for Preview v0.230.0
+
+This project had a stable historical solution on the older `0.225.x / 0.226.x` binaries, but the
+Preview `0.230.0` app changed enough that the ACP hook had to be re-derived from the installed
+binary.
+
+### Ground truth used during this pass
+
+- Installed app under test:
+  `0.230.0+preview.205.9437a84390a396d666f04b38db87d89bb07284c1`
+- Bundle build:
+  `20260325.153514`
+- Local source checkout:
+  `6bc34ff44f9931a77e5e82cff87dc2aa266a41a4`
+
+The local source checkout was useful for call flow, but the final offsets had to come from binary
+analysis because the app and source commits did not match.
+
+### Source call path confirmed during the update
+
+```text
+agent_servers::acp::ClientDelegate::request_permission
+  -> AcpThread::request_tool_call_authorization
+     -> upsert_tool_call_inner
+     -> ToolCallStatus::WaitingForConfirmation { options, respond_tx }
+
+agent_ui::Conversation::authorize_tool_call
+  -> AcpThread::authorize_tool_call
+     -> tool_call_mut(id)
+     -> respond_tx.send(outcome)
+```
+
+This matters because the correct runtime model is not “find the newest waiting-looking entry”; it
+is “find the same `ToolCall` entry that `authorize_tool_call` would find by `ToolCallId`.”
+
+### Phase A — first 0.230 port [loads, but does not approve]
+
+The first port correctly updated:
+
+- `ENTRY_SIZE`: `0x1b0 -> 0x1c0`
+- `ENTRY_STATUS_OFFSET`: `0x48 -> 0x118`
+- `ENTRY_RESPOND_TX_OFFSET`: `0x68 -> 0x160`
+- send payload: legacy string ID -> `SelectedPermissionOutcome`
+
+But it still preserved two stale assumptions from the previous generation of docs:
+
+- `ToolCall` entry discriminant was still treated as `0x07`
+- `WaitingForConfirmation` was still treated as an exact discriminant value
+
+Result in logs:
+
+```text
+2026-03-27T11:36:10Z  tool_authorization #1: no WaitingForConfirmation entry found
+...
+2026-03-27T11:57:53Z  tool_authorization #25: no WaitingForConfirmation entry found
+```
+
+Interpretation:
+
+- symbol hook install worked
+- offset move to `0x118 / 0x160` was not enough by itself
+- the entry matching logic was still wrong for Preview `0.230.0`
+
+### Phase B — final 0.230 port [current]
+
+The final 0.230 update changed the hook strategy:
+
+1. capture `ToolCallUpdate.tool_call_id` in `on_enter`
+2. walk `self.entries` in `on_leave`
+3. match the exact entry by `ToolCallId`
+4. treat waiting-state as a payload-bearing niche case:
+   `status_head < 0x8000_0000_0000_0002`
+5. reconstruct the real `oneshot::Sender<SelectedPermissionOutcome>`
+6. send:
+   `SelectedPermissionOutcome { option_id: "allow", option_kind: AllowOnce, params: None }`
+
+New binary-derived facts that changed the hook:
+
+| Item | Value |
+|------|-------|
+| `AcpThread.entries.ptr` | `self + 0x90` |
+| `AcpThread.entries.len` | `self + 0x98` |
+| `AgentThreadEntry` size | `0x1c0` |
+| `AgentThreadEntry::ToolCall` discriminant | `0x02` |
+| `ToolCall.status` offset | `0x118` |
+| `respond_tx` offset | `0x160` |
+| `ToolCall.id.ptr/len` | `0x168 / 0x170` |
+| `ToolCallUpdate.id.ptr/len` | `0x128 / 0x130` |
+| waiting-state test | `status_head < 0x8000_0000_0000_0002` |
+
+### Operational workflow used in this pass
+
+```bash
+# 1. Read source call path
+sed -n '1435,1475p' /Users/lqiao/codes-repos/gh-zed-industries__zed/crates/agent_servers/src/acp.rs
+sed -n '1880,2065p' /Users/lqiao/codes-repos/gh-zed-industries__zed/crates/acp_thread/src/acp_thread.rs
+
+# 2. Read installed binary symbols / disassembly
+nm -nm "/Applications/Zed Preview.app/Contents/MacOS/zed"
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread31request_tool_call_authorization' ...
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread19authorize_tool_call' ...
+xcrun llvm-objdump --disassemble-symbols='__RNvMsn_Cs3xb0dWJrqhb_10acp_threadNtB5_9AcpThread22upsert_tool_call_inner' ...
+
+# 3. Update hook code
+cargo check
+cargo build --release
+
+# 4. Patch and verify
+cargo patch --verify
+
+# 5. Confirm the binary and logs
+otool -L "/Applications/Zed Preview.app/Contents/MacOS/zed"
+tail -n 80 ~/Library/Logs/Zed/zed-yolo-hook.$(date +%Y-%m-%d).log
+```
+
+### Validation state after the final patch
+
+Verified:
+
+- `cargo check` passed
+- `cargo build --release` passed
+- `cargo patch --verify` passed
+- `otool -L` shows
+  `/Users/lqiao/codes/zed-yolo-hook/target/release/libzed_yolo_hook.dylib`
+- fresh post-patch startup logs show:
+  - `permission_decision: hook installed`
+  - `tool_authorization: hook installed`
+  - `YOLO mode ACTIVE`
+
+Later re-observed during the same pass:
+
+- a fresh post-patch ACP authorization event at `2026-03-27T12:03:12Z` showing:
+  - `tool_authorization #1: matched v0.230.x entry[5] by ToolCallId`
+  - `tool_authorization #1: send succeeded`
+  - `tool_authorization #1: approved in 54us via v0.230.x`
+
+So the final status on 2026-03-27 is:
+
+- patch / injection / startup: confirmed
+- pre-fix failure mode: reproduced and explained
+- final runtime match logic: updated to align with binary and source
+- live post-patch ACP approval log: confirmed
+
+---
+
+## 2. Historical Working Architecture (v0.17.1)
 
 The zed-yolo-hook intercepts TWO code paths via separate modules:
 
@@ -60,7 +205,7 @@ AgentThreadEntry:
 
 ---
 
-## 2. Full Version History
+## 3. Full Version History
 
 ### v0.11.0 — Inline ASM call to authorize_tool_call [DOES NOT WORK]
 - **Approach**: Save registers in `on_enter`, call `authorize_tool_call` via inline asm in `on_leave`
@@ -119,7 +264,7 @@ AgentThreadEntry:
 
 ---
 
-## 3. Key Technical Discoveries
+## 4. Key Technical Discoveries
 
 ### aarch64 Rust ABI
 
@@ -194,7 +339,7 @@ struct Sender<T> { inner: Arc<Inner<T>> }
 
 ---
 
-## 4. Approaches That DON'T Work (and Why)
+## 5. Approaches That DON'T Work (and Why)
 
 | Approach | Why it fails |
 |----------|-------------|
@@ -209,7 +354,7 @@ struct Sender<T> { inner: Arc<Inner<T>> }
 
 ---
 
-## 5. The Approach That WORKS
+## 6. The Approach That WORKS
 
 1. **Frida `attach`** on `request_tool_call_authorization` (not `replace`)
 2. **`on_enter`**: save `self` pointer (x0)
@@ -222,7 +367,7 @@ struct Sender<T> { inner: Arc<Inner<T>> }
 
 ---
 
-## 6. Source Code Locations (Zed v0.226.0)
+## 7. Source Code Locations (Zed v0.226.0)
 
 | File | Line | Description |
 |------|------|-------------|

@@ -131,24 +131,32 @@ Since direct Rust symbol hooking is fragile, we use a more robust approach:
 
 </details>
 
-### Current Working Approach (v0.17.1): Attach + Memory Walk + Transmute Sender
+### Current Working Approach (v0.230.0 update): Attach + Match by ToolCallId + Real Sender::send
 
-After v0.1–v0.16 all failed in various ways (see `05_yolo_implementation_log.md`), v0.17.1 uses:
+The current ACP hook for Preview `0.230.0` keeps the same high-level Frida attach model, but the
+matching logic is more precise than the historical `v0.17.1` implementation.
+
+Current flow:
 
 1. **Frida `attach`** (not replace) on `request_tool_call_authorization`
-2. **`on_enter`**: saves `self` pointer (x0 register)
-3. **`on_leave`**: walks `self.entries` Vec using hardcoded offsets from disassembly to find the last `WaitingForConfirmation` entry and extract `respond_tx`
-4. **`dispatch_async_f`**: defers the send to after the current call stack unwinds (avoids re-entrancy)
-5. **`transmute`**: reconstructs a real `futures_channel::oneshot::Sender<Arc<str>>` from the raw Arc pointer
-6. **`.send(Arc::from("allow"))`**: uses the actual futures-channel API — handles locking, value writing, and waker notification correctly
+2. **`on_enter`**: saves `self` (x0) and captures the current `ToolCallId` from `ToolCallUpdate`
+3. **`on_leave`**: walks `self.entries` using binary-derived offsets from the installed app
+4. matches the exact `ToolCall` entry by `ToolCallId`
+5. treats `WaitingForConfirmation` as a niche-encoded payload state instead of a simple exact discriminant
+6. **`transmute`**: reconstructs the real `futures_channel::oneshot::Sender<SelectedPermissionOutcome>`
+7. **`.send(SelectedPermissionOutcome { option_id: "allow", option_kind: AllowOnce, ... })`**
+   uses the actual futures-channel API and the current ACP payload shape
 
 Key properties:
 - **No ABI matching needed** — we don't call any Rust functions with Rust ABI
 - **No keystroke simulation** — sends directly through the Rust oneshot channel
 - **No cx/Context needed** — oneshot send is independent of GPUI
-- **No re-entrancy** — deferred via dispatch_async_f
+- **No re-entrancy** — the current path sends inline from `on_leave`; it does not call back into
+  `authorize_tool_call`
 - **Correct waking** — Sender::drop calls drop_tx which wakes the receiver
 - **No Obj-C at all** — pure Rust-level interception
+- **Version-aware matching** — current code carries a `v0.230.x` layout plus a legacy fallback for
+  older builds
 
 ### Bug History (Full)
 
@@ -167,6 +175,8 @@ See `05_yolo_implementation_log.md` for exhaustive details. Summary:
 | v0.16–0.16.1 | Correct register layout + inline ASM | Crash then hang (fat ptr swap, re-entrancy) |
 | v0.17.0 | Memory walk + manual oneshot write | Hang (wrong discriminant, wrong offsets, no waker) |
 | **v0.17.1** | **Memory walk + transmute Sender + .send() API** | **SUCCESS** |
+| v0.18.0 | First Preview 0.230 port (new offsets + new payload only) | Hook loaded, but still `no WaitingForConfirmation entry found` |
+| **v0.18.x** | **Preview 0.230 port with ToolCallId matching + niche-aware waiting test** | **Confirmed: `matched v0.230.x entry` -> `send succeeded` -> `approved in ... via v0.230.x`** |
 
 ---
 
@@ -215,12 +225,13 @@ fn init() {
 // on_leave: zeroes sret buffer (x8) → forces Allow return
 
 // src/hooks/tool_authorization.rs — Hook 2 (ACP agents)
-// on_enter: saves self pointer (x0)
-// on_leave: walks self.entries Vec → finds respond_tx
-//           → dispatch_async_f → transmute Sender → .send("allow")
+// on_enter: saves self pointer (x0) + ToolCallId
+// on_leave: walks self.entries Vec → matches ToolCallId
+//           → finds respond_tx → transmute Sender
+//           → .send(SelectedPermissionOutcome::AllowOnce)
 ```
 
-### Architecture (v0.17.1)
+### Architecture (Preview v0.230.0)
 
 ```
 ACP Agent                  Zed Process                    yolo-hook
@@ -229,7 +240,7 @@ ACP Agent                  Zed Process                    yolo-hook
    |                           |                              |
    |                           |-- [ATTACHED via Frida] ----->|
    |                           |                              |
-   |                           |   on_enter: save self (x0)   |
+   |                           |   on_enter: save self + id   |
    |                           |                              |
    |                           |   ORIGINAL fn executes:      |
    |                           |      → creates (tx, rx)      |
@@ -237,12 +248,12 @@ ACP Agent                  Zed Process                    yolo-hook
    |                           |      → emits ToolAuthReq     |
    |                           |                              |
    |                           |   on_leave:                  |
-   |                           |   1. Walk self.entries Vec    |
-   |                           |   2. Find respond_tx ptr     |
-   |                           |   3. dispatch_async_f:       |
-   |                           |      bump Arc refcount       |
-   |                           |      transmute → Sender      |
-   |                           |      .send("allow")          |
+   |                           |   1. Walk self.entries Vec   |
+   |                           |   2. Match exact ToolCallId  |
+   |                           |   3. Check waiting niche     |
+   |                           |   4. Find respond_tx ptr     |
+   |                           |   5. transmute → Sender      |
+   |                           |   6. send AllowOnce outcome  |
    |                           |      Sender drop → wake rx   |
    |                           |                              |
    |<-- permission granted ----|   (dialog auto-resolved)     |

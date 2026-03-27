@@ -27,17 +27,20 @@ cd /path/to/zed-yolo-hook
 cargo patch
 ```
 
+Recommended full workflow with startup verification:
+
+```bash
+cd /path/to/zed-yolo-hook
+cargo patch --verify
+```
+
 Patch Zed Stable:
 
 ```bash
 cargo patch --stable
 ```
 
-Patch a custom app path (useful if `/Applications` is not writable):
-
-```bash
-cargo patch --zed-app "/path/to/Zed Preview.app"
-```
+The current `xtask` targets `/Applications/Zed Preview.app` by default.
 
 What it does:
 
@@ -47,6 +50,12 @@ What it does:
 4. Injects the dylib load command
 5. Re-signs the app bundle (ad-hoc)
 6. Verifies injection via `otool -L`
+
+Verified on 2026-03-27 for:
+
+- Zed Preview `0.230.0`
+- build `0.230.0+preview.205.9437a84390a396d666f04b38db87d89bb07284c1`
+- bundle build `20260325.153514`
 
 ---
 
@@ -64,6 +73,16 @@ You should see something like:
 - `permission_decision: hook installed` (only in allow-all mode)
 - `tool_authorization: hook installed`
 - `YOLO mode ACTIVE`
+
+For a full ACP-path confirmation, a fresh external-agent tool permission request should then
+produce lines like:
+
+- `matched v0.230.x entry`
+- `send succeeded`
+- `approved in ... via v0.230.x`
+
+This exact sequence was observed in the 2026-03-27 verification log after the final
+Preview `0.230.0` patch.
 
 Example: agent tool call proceeds without the approval dialog:
 
@@ -106,7 +125,8 @@ cargo patch restore --stable  # Zed Stable
 
 ### "Permission" or write failures
 
-If patching fails due to filesystem permissions on `/Applications`, copy the app bundle to a user-writable location and patch via `--zed-app`.
+If patching fails due to filesystem permissions on `/Applications`, patch from a shell session that has
+write access to the app bundle. The current `xtask` does not expose a custom `--zed-app` override.
 
 ### Keychain prompts / access issues
 

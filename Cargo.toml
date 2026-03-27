@@ -14,6 +14,9 @@ crate-type = ["cdylib"]
 # Frida-gum for function interception (git main for Frida 17.7.3 support)
 frida-gum = { git = "https://github.com/frida/frida-rust", features = ["auto-download", "invocation-listener"] }
 
+# Match Zed Preview 0.230.0's ACP protocol types when synthesizing approvals.
+agent-client-protocol = "=0.10.2"
+
 # Constructor attribute — runs on dylib load
 ctor = "0.6"
 
@@ -37,4 +40,3 @@ lto = true            # Link-time optimization — eliminates dead code across c
 codegen-units = 1     # Single codegen unit — better optimization, slower compile
 opt-level = "z"       # Optimize for size (smallest binary)
 panic = "abort"       # No unwinding tables — saves ~30KB
-
