@@ -1,8 +1,8 @@
 # YOLO Hook Upgrade Guide: Zed Updates, Re-Patching, and Offset Drift
 
-> Date: 2026-02-26, updated 2026-03-27
+> Date: 2026-02-26, updated 2026-04-03
 > Target: Zed Preview on macOS aarch64
-> Deep binary notes: `docs/11_offset_recalibration_v0.228.0.md`, `docs/12_offset_recalibration_v0.230.0.md`
+> Deep binary notes: `docs/11_offset_recalibration_v0.228.0.md`, `docs/12_offset_recalibration_v0.230.0.md`, `docs/13_offset_recalibration_v0.231.1.md`
 
 ---
 
@@ -56,18 +56,26 @@ It does not currently expose the old custom `--zed-app` override mentioned in so
 
 ---
 
-## 3. Current Known-Good Preview 0.230.0 Facts
+## 3. Current Known-Good Preview Facts
 
-Installed app under test on 2026-03-27:
+### Preview 0.231.1 (latest verified, 2026-04-03)
 
 - Bundle id: `dev.zed.Zed-Preview`
-- app version: `0.230.0`
+- app version: `0.231.1`
+- build string:
+  `0.231.1+preview.211.c8a91564e8bc30251fc9a15901c33af3c3ddf7e0`
+- ACP crate: `agent-client-protocol 0.10.2` (unchanged from 0.230.0)
+
+**All offsets are identical to v0.230.0. No code changes required.**
+
+See `docs/13_offset_recalibration_v0.231.1.md` for the full verification.
+
+### Preview 0.230.0 (baseline for current hook code, 2026-03-27)
+
 - build string:
   `0.230.0+preview.205.9437a84390a396d666f04b38db87d89bb07284c1`
-- bundle build:
-  `20260325.153514`
 
-Current binary-derived ACP constants for this build:
+### Binary-derived ACP constants (stable across v0.230.0 -> v0.231.1)
 
 | Item | Value |
 |------|-------|
@@ -82,7 +90,7 @@ Current binary-derived ACP constants for this build:
 | waiting-state test | `status_head < 0x8000_0000_0000_0002` |
 
 Do not reuse the old `v0.226.x / v0.228.x` assumptions (`ToolCall = 0x07`, `Waiting = 0x00`)
-for this build.
+for these builds.
 
 ---
 
@@ -276,5 +284,6 @@ grep -E 'tool_authorization #|matched v0\.230\.x entry|send succeeded|approved i
    binary for offsets and enum layout.
 2. Startup verification is necessary but not sufficient. It proves the dylib loads, not that ACP
    approval succeeded.
-3. Keep `docs/12_offset_recalibration_v0.230.0.md` as the authoritative note for the current
-   Preview generation.
+3. Keep `docs/13_offset_recalibration_v0.231.1.md` as the authoritative note for the current
+   Preview generation. See also `docs/12_offset_recalibration_v0.230.0.md` for the baseline
+   reverse-engineering work.
