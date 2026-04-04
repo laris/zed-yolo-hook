@@ -94,19 +94,46 @@ For reference, the dialog this project bypasses:
 
 ---
 
-## 3. Disable Without Restoring
+## 3. Configuration
 
-Launch Zed with YOLO disabled:
+Config file: `~/.config/dylib-hooks/{app_id}/zed-yolo-hook.json`
+
+Works with Finder/Dock launches (env vars are stripped by macOS LaunchServices).
+
+```bash
+# Create config with defaults
+cargo patch config reset
+
+# Show current config
+cargo patch config
+
+# Set ExitPlanMode behavior (fixes "Ready to code?" stuck-in-plan bug)
+cargo patch config set plan_option acceptEdits
+
+# Use persistent "Always Allow" for tools (reduces future prompts)
+cargo patch config set tool_option allow_always
+
+# Disable without unpatching
+cargo patch config set mode disabled
+```
+
+Config fields:
+
+| Field | Default | Values |
+|-------|---------|--------|
+| `mode` | `allow_all` | `allow_all`, `allow_safe`, `disabled` |
+| `tool_option` | `allow` | `allow`, `allow_always` |
+| `plan_option` | `acceptEdits` | `acceptEdits`, `bypassPermissions`, `default`, `plan` |
+| `log_level` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
+| `retry_delay_us` | `1500` | 0–10000 |
+
+Environment variables (`ZED_YOLO_MODE`, `ZED_YOLO_TOOL_OPTION`, etc.) override config file values when set — useful for one-off terminal testing:
 
 ```bash
 ZED_YOLO_MODE=0 open "/Applications/Zed Preview.app"
 ```
 
-Modes:
-
-- `ZED_YOLO_MODE` unset: enable hooks (default)
-- `ZED_YOLO_MODE=allow_safe`: only auto-approve ACP dialogs; native permissions remain governed by Zed settings
-- `ZED_YOLO_MODE=0|off|disabled`: dylib loads but installs no hooks
+Restart Zed for config changes to take effect.
 
 ---
 

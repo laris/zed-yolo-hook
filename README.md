@@ -12,19 +12,47 @@ This is implemented as a Rust `cdylib` injected into Zed's `zed` binary and two 
 - `dylib-kit`: https://github.com/laris/dylib-kit
 - `zed-project-workspace`: https://github.com/laris/zed-project-workspace
 
-## Modes
+## Configuration
 
-`ZED_YOLO_MODE` controls which hooks are installed:
+Config is stored in `~/.config/dylib-hooks/{app_id}/zed-yolo-hook.json` (works with Finder/Dock launches — no shell env needed):
 
-- Unset: enable both hooks (ACP + native)
-- `allow_safe`/`safe`: enable ACP-only; native permissions stay governed by Zed settings
-- `0`/`off`/`disabled`: disable hooks (dylib loads but does nothing)
+```json
+{
+  "mode": "allow_all",
+  "tool_option": "allow",
+  "plan_option": "acceptEdits",
+  "log_level": "info",
+  "retry_delay_us": 1500
+}
+```
+
+| Field | Default | Values | Effect |
+|-------|---------|--------|--------|
+| `mode` | `allow_all` | `allow_all`, `allow_safe`, `disabled` | Which hooks to install |
+| `tool_option` | `allow` | `allow`, `allow_always` | Option for regular tool permissions |
+| `plan_option` | `acceptEdits` | `acceptEdits`, `bypassPermissions`, `default`, `plan` | Option for "Ready to code?" prompt |
+| `log_level` | `info` | `trace`, `debug`, `info`, `warn`, `error` | Log verbosity |
+| `retry_delay_us` | `1500` | 0–10000 | Retry delay on miss (µs) |
+
+Manage via CLI:
+
+```bash
+cargo patch config                    # Show current config
+cargo patch config set plan_option bypassPermissions
+cargo patch config set tool_option allow_always
+cargo patch config reset              # Reset to defaults
+```
+
+Environment variables (`ZED_YOLO_MODE`, `ZED_YOLO_TOOL_OPTION`, `ZED_YOLO_PLAN_OPTION`, `ZED_YOLO_LOG`) override config file values when set (useful for terminal testing).
 
 ## Quickstart
 
 ```bash
 # Patch Zed Preview (default)
 cargo patch
+
+# Create config (optional — defaults work out of the box)
+cargo patch config reset
 
 # Tail logs
 tail -f ~/Library/Logs/Zed/zed-yolo-hook.*.log
@@ -61,3 +89,4 @@ This intentionally removes an important safety barrier.
 - `docs/04_yolo_design.md`
 - `docs/05_yolo_implementation_log.md`
 - `docs/06_yolo_upgrade_guide.md`
+- `docs/14_exitplanmode_gap_analysis.md` — ExitPlanMode bug fix, complete ACP permission matrix, config reference

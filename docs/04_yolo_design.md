@@ -486,27 +486,65 @@ cargo patch restore --stable  # Zed Stable
 
 ## 8. Configuration
 
-### Environment Variables
+### Config file (primary — works with Finder/Dock launches)
 
-| Variable | Values | Default | Description |
-|----------|--------|---------|-------------|
-| `ZED_YOLO_MODE` | `0`/`off`/`disabled` | **(enabled)** | Set to disable YOLO mode |
-| `ZED_YOLO_MODE` | `allow_safe`/`safe` | — | Enable ACP-only mode (skip native tool permission hook) |
-| `ZED_YOLO_LOG` | `debug`, `info`, `warn` | `info` | Log level |
+Location: `~/.config/dylib-hooks/{app_id}/zed-yolo-hook.json`
+
+```json
+{
+  "mode": "allow_all",
+  "tool_option": "allow",
+  "plan_option": "acceptEdits",
+  "log_level": "info",
+  "retry_delay_us": 1500
+}
+```
+
+| Field | Default | Values | Description |
+|-------|---------|--------|-------------|
+| `mode` | `allow_all` | `allow_all`, `allow_safe`, `disabled` | Which hooks to install |
+| `tool_option` | `allow` | `allow`, `allow_always` | Option_id for regular tool permissions (Scenario C) |
+| `plan_option` | `acceptEdits` | `acceptEdits`, `bypassPermissions`, `default`, `plan` | Option_id for ExitPlanMode / "Ready to code?" (Scenario A) |
+| `log_level` | `info` | `trace`, `debug`, `info`, `warn`, `error` | Tracing filter level |
+| `retry_delay_us` | `1500` | 0–10000 | Microseconds to wait before retry on miss |
+
+Manage via CLI:
+
+```bash
+cargo patch config                    # Show current config
+cargo patch config set plan_option bypassPermissions
+cargo patch config reset              # Reset to defaults
+```
+
+### Environment variables (override — for terminal testing)
+
+| Variable | Overrides |
+|----------|-----------|
+| `ZED_YOLO_MODE` | `mode` |
+| `ZED_YOLO_TOOL_OPTION` | `tool_option` |
+| `ZED_YOLO_PLAN_OPTION` | `plan_option` |
+| `ZED_YOLO_LOG` | `log_level` |
+| `ZED_YOLO_RETRY_DELAY_US` | `retry_delay_us` |
+
+Precedence: env var > config file > built-in default.
 
 ### Modes
 
 | Mode | Behavior |
 |------|----------|
-| **(default / unset)** | **Auto-approve ALL tool calls** |
-| `allow_safe` / `safe` | Auto-approve ACP dialogs only (native tool permissions unchanged) |
-| `0` / `off` / `disabled` | Hook loads but does nothing — normal behavior |
+| `allow_all` **(default)** | Auto-approve ALL tool calls (ACP + native) |
+| `allow_safe` | Auto-approve ACP dialogs only; native tool permissions follow Zed settings |
+| `disabled` | Hook loads but does nothing — normal behavior |
 
-YOLO mode is **enabled by default** when the dylib is loaded. To disable without unpatching, launch Zed with:
+To disable without unpatching:
 
 ```bash
+cargo patch config set mode disabled
+# Or one-off from terminal:
 ZED_YOLO_MODE=0 open "/Applications/Zed Preview.app"
 ```
+
+See `docs/14_exitplanmode_gap_analysis.md` for the complete ACP permission matrix.
 
 ---
 

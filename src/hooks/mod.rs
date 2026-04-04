@@ -18,3 +18,9 @@ pub static PERMISSION_DECISION_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Counter for tool_authorization hook invocations (PATH 2).
 pub static TOOL_AUTHORIZATION_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Counter for tool_authorization misses (no WaitingForConfirmation found).
+pub static TOOL_AUTHORIZATION_MISS_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Counter for misses recovered by retry.
+pub static TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT: AtomicU64 = AtomicU64::new(0);
