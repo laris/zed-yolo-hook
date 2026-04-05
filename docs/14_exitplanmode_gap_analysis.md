@@ -285,7 +285,46 @@ const response = await this.client.requestPermission({
 
 ---
 
-## 7. References
+## 7. Known Gap: Restored/Resumed Sessions
+
+### Discovery (2026-04-05)
+
+When Zed restarts, saved ACP sessions are restored via `load_session` or `resume_session` (acp.rs:700-820). Tool calls in these restored sessions arrive via `session_notification()` → `handle_session_update()` → `upsert_tool_call()` with their original status. This path does **NOT** call `request_tool_call_authorization`.
+
+If a tool call was `Pending` when Zed quit, it gets re-inserted as `Pending` on restore. Claude Code then re-issues `requestPermission()` for the new prompt, but the restored tool call may render the "Awaiting Confirmation" dialog before `requestPermission()` arrives — creating a window where the dialog is visible but the hook hasn't been triggered.
+
+Additionally, if the ACP agent connection drops and reconnects (e.g., Claude Code process restarts), the agent may re-send tool call state via `session_notification` rather than `request_permission`, bypassing the authorization hook entirely.
+
+### Verified: ACP v0.24.2 vs v0.25.0
+
+Compared the compiled `canUseTool()` function between claude-agent-acp v0.24.2 and v0.25.0 — the permission flow is **identical**. The v0.25.0 changes are only:
+- Added "auto" permission mode
+- Auth method improvements (split claude-ai-login / console-login)
+- Context window size calculation fixes
+
+The `requestPermission()` call path is unchanged between versions.
+
+### Two code paths for tool calls in Zed
+
+| Path | Source | Calls `request_tool_call_authorization`? | Hook intercepts? |
+|------|--------|----------------------------------------|-----------------|
+| `request_permission` (acp.rs:1445) | Claude Code calls `requestPermission()` | **Yes** | **Yes** |
+| `session_notification` (acp.rs:1584) | Claude Code sends status update | **No** | **No** |
+| `load_session` restore (acp.rs:700) | Zed restores saved session | **No** (tool calls arrive via session updates) | **No** |
+
+### Impact
+
+- Fresh tool calls in active sessions: **always intercepted** (100% of the time)
+- Restored/resumed sessions after restart: **may be missed** if tool call state arrives via session_notification before requestPermission
+- This explains why the "nixos" workspace showed "Awaiting Confirmation" while other workspaces worked fine — the nixos session was likely restored from a previous Zed run
+
+### Potential fix directions
+
+1. **Hook `upsert_tool_call_inner`** — intercepts ALL tool call insertions regardless of source. Would need to detect which ones need auto-approval (check for WaitingForConfirmation status after insertion).
+2. **Hook `handle_session_update`** — intercept the session_notification path specifically.
+3. **Periodic scan** — background thread that scans `AcpThread.entries` for stale WaitingForConfirmation entries and auto-approves them.
+
+## 8. References
 
 - [zed-industries/zed#48992](https://github.com/zed-industries/zed/issues/48992) — bypassPermissions causes hallucination
 - [zed-industries/zed#30313](https://github.com/zed-industries/zed/issues/30313) — "Always allow" scoping bug (61 reactions)

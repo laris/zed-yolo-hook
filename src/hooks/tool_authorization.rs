@@ -56,13 +56,13 @@ const TOOL_CALL_UPDATE_ID_PTR_OFFSET_V230: usize = 0x128; // ToolCallUpdate.tool
 const TOOL_CALL_UPDATE_ID_LEN_OFFSET_V230: usize = 0x130; // ToolCallUpdate.tool_call_id.len
 
 #[derive(Clone, Copy, Debug)]
-enum SendStyle {
+pub(crate) enum SendStyle {
     LegacyOptionId,
     SelectedOutcome,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum MatchStyle {
+pub(crate) enum MatchStyle {
     // Preview 0.230.x:
     // - AgentThreadEntry::ToolCall discriminant = 0x2
     // - ToolCall.id at entry+0x168 / +0x170
@@ -81,16 +81,16 @@ enum MatchStyle {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct EntryLayout {
-    name: &'static str,
-    entry_size: usize,
-    status_offset: usize,
-    respond_tx_offset: usize,
-    send_style: SendStyle,
-    match_style: MatchStyle,
+pub(crate) struct EntryLayout {
+    pub(crate) name: &'static str,
+    pub(crate) entry_size: usize,
+    pub(crate) status_offset: usize,
+    pub(crate) respond_tx_offset: usize,
+    pub(crate) send_style: SendStyle,
+    pub(crate) match_style: MatchStyle,
 }
 
-const ENTRY_LAYOUTS: &[EntryLayout] = &[
+pub(crate) const ENTRY_LAYOUTS: &[EntryLayout] = &[
     // Zed Preview 0.230.0 9437a84390a396d666f04b38db87d89bb07284c1
     EntryLayout {
         name: "v0.230.x",
@@ -613,6 +613,8 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         let tool_call_update_ptr = cpu.reg(1);
 
         SAVED_SELF.with(|c| c.set(self_ptr));
+        // Register this AcpThread for periodic scanning
+        super::entry_scanner::register_thread(self_ptr);
         SAVED_TOOL_CALL_ID.with(|c| {
             let call_id = unsafe { read_tool_call_id_v230(tool_call_update_ptr) };
             c.set(call_id);
@@ -750,3 +752,23 @@ fn log_stats(count: u64) {
 /// Symbol search patterns for locating `AcpThread::request_tool_call_authorization` in Zed's binary.
 pub const SYMBOL_INCLUDE: &[&str] = &["acp_thread", "AcpThread", "request_tool_call_authorization"];
 pub const SYMBOL_EXCLUDE: &[&str] = &["drop_in_place", "closure", "vtable", "island", "spawn"];
+
+// ---- pub(crate) wrappers for entry_scanner ----
+
+pub(crate) unsafe fn looks_like_sender_arc_pub(ptr: u64) -> bool {
+    unsafe { looks_like_sender_arc(ptr) }
+}
+
+pub(crate) unsafe fn detect_plan_mode_pub(entry: u64, layout: &EntryLayout) -> bool {
+    // Simplified: only call for v0.230.x layout
+    unsafe { detect_plan_mode(entry, layout, 0) }
+}
+
+pub(crate) unsafe fn send_allow_pub(send_style: SendStyle, sender_arc_ptr: u64, is_plan: bool, count: u64) -> bool {
+    // Create a minimal layout to pass to send_allow
+    let layout = ENTRY_LAYOUTS[0]; // v0.230.x
+    // Override send_style if needed
+    let mut l = layout;
+    l.send_style = send_style;
+    unsafe { send_allow(l, sender_arc_ptr, is_plan, count) }
+}

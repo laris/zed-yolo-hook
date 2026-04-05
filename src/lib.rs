@@ -112,6 +112,54 @@ fn init_inner() {
         tracing::warn!("tool_authorization: request_tool_call_authorization symbol not found");
     }
 
+    // -----------------------------------------------------------------------
+    // Hook 3 (Approach 1): upsert_tool_call_inner — catch all tool call insertions
+    // -----------------------------------------------------------------------
+    if let Some((name, ptr)) = symbols::find_by_pattern(
+        &main_module,
+        hooks::upsert_hook::SYMBOL_INCLUDE,
+        hooks::upsert_hook::SYMBOL_EXCLUDE,
+    ) {
+        tracing::info!("upsert_hook: Found {} at {:?}", name, ptr);
+        let mut listener = hooks::upsert_hook::Listener;
+        match interceptor.attach(ptr, &mut listener) {
+            Ok(_) => {
+                std::mem::forget(listener);
+                tracing::info!("upsert_hook: hook installed (approach 1)");
+            }
+            Err(e) => tracing::error!("upsert_hook: attach failed: {:?}", e),
+        }
+    } else {
+        tracing::warn!("upsert_hook: upsert_tool_call_inner symbol not found");
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 4 (Approach 2): handle_session_update — catch session restore path
+    // -----------------------------------------------------------------------
+    if let Some((name, ptr)) = symbols::find_by_pattern(
+        &main_module,
+        hooks::session_update_hook::SYMBOL_INCLUDE,
+        hooks::session_update_hook::SYMBOL_EXCLUDE,
+    ) {
+        tracing::info!("session_update_hook: Found {} at {:?}", name, ptr);
+        let mut listener = hooks::session_update_hook::Listener;
+        match interceptor.attach(ptr, &mut listener) {
+            Ok(_) => {
+                std::mem::forget(listener);
+                tracing::info!("session_update_hook: hook installed (approach 2)");
+            }
+            Err(e) => tracing::error!("session_update_hook: attach failed: {:?}", e),
+        }
+    } else {
+        tracing::warn!("session_update_hook: handle_session_update symbol not found");
+    }
+
+    // -----------------------------------------------------------------------
+    // Approach 3: Periodic stale scanner thread
+    // -----------------------------------------------------------------------
+    // Scanner interval: 2 seconds (much longer than the per-call retry_delay_us)
+    hooks::stale_scanner::start(2000);
+
     // Register in shared hook registry
     register_in_registry(&app_id, mode);
 
