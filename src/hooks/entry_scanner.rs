@@ -148,6 +148,11 @@ pub unsafe fn scan_and_approve_from_scanner(self_ptr: u64) -> u64 {
 
                 let ok = unsafe { tool_authorization::send_allow_pub(layout.send_style, tx, is_plan, count_val) };
 
+                if ok {
+                    // Force status to InProgress so the UI dismisses the dialog
+                    unsafe { tool_authorization::force_status_in_progress(entry, layout) };
+                }
+
                 // Mark as attempted (avoid infinite retry)
                 attempted.insert((self_ptr, i));
 

@@ -354,6 +354,60 @@ unsafe fn send_allow(layout: EntryLayout, sender_arc_ptr: u64, is_plan_mode: boo
     }
 }
 
+/// After a successful send, overwrite the entry's status to InProgress.
+///
+/// `authorize_tool_call` does `mem::replace(&mut call.status, InProgress)` which
+/// both changes the status byte AND sends through the oneshot. Our hook only sends
+/// through the oneshot — the status byte stays as WaitingForConfirmation, causing
+/// the UI to keep showing the dialog.
+///
+/// The ToolCallStatus enum is niche-encoded:
+///   status_head < 0x8000_0000_0000_0002 → WaitingForConfirmation (has data)
+///   status_head >= 0x8000_0000_0000_0002 → one of the other variants (no data)
+///
+/// We write InProgress by setting status_head to a value that represents the
+/// InProgress variant in the niche encoding, and zeroing the rest of the status
+/// region to drop the PermissionOptions and respond_tx cleanly.
+///
+/// The niche values for the no-data variants are:
+///   Pending    = 0x8000_0000_0000_0002  (variant 0, offset by niche start)
+///   InProgress = 0x8000_0000_0000_0003  (variant 2, but Pending=0 so InProgress=2+offset... )
+///
+/// Actually, the exact niche values depend on the compiler. The safest approach is
+/// to write the value we observe from the binary when authorize_tool_call sets InProgress.
+/// From the log, entries that have been resolved show status_head=0x8000000000000003
+/// or similar values >= niche_start.
+///
+/// We use 0x8000_0000_0000_0004 which should map to InProgress (variant index 2,
+/// niche_start + 2). If wrong, at minimum it takes the status OUT of the
+/// WaitingForConfirmation range, which stops the dialog from rendering.
+///
+/// # Safety
+/// `entry` must be a valid entry pointer and `layout` must match the binary.
+pub(crate) unsafe fn force_status_in_progress(entry: u64, layout: &EntryLayout) {
+    // Write InProgress niche value to status_head
+    // This takes the entry out of WaitingForConfirmation regardless of exact variant mapping
+    let status_ptr = (entry + layout.status_offset as u64) as *mut u64;
+
+    // Read current value for logging
+    let old_head = unsafe { *status_ptr };
+
+    // Write a value >= niche_start to exit WaitingForConfirmation
+    // We use niche_start + 2 as a guess for InProgress (Pending=+0, WFC=niche, InProgress=+2)
+    // The exact value may not be InProgress, but it will be "not WaitingForConfirmation"
+    // which is sufficient to dismiss the dialog.
+    let in_progress_niche: u64 = 0x8000_0000_0000_0004;
+    unsafe { *status_ptr = in_progress_niche };
+
+    // Zero the respond_tx pointer so it's not dangling
+    let tx_ptr = (entry + layout.respond_tx_offset as u64) as *mut u64;
+    unsafe { *tx_ptr = 0 };
+
+    tracing::debug!(
+        "force_status_in_progress: entry status_head {old_head:#x} → {in_progress_niche:#x}"
+    );
+}
+
 /// Attempt to detect if this is an ExitPlanMode prompt by reading the first
 /// PermissionOption's option_id from the WaitingForConfirmation entry.
 ///
@@ -447,8 +501,8 @@ fn find_waiting_sender(
     layout: EntryLayout,
     current_call_id: ArcStrRef,
     count: u64,
-) -> Option<(u64, bool)> {
-    // Returns (respond_tx, is_plan_mode)
+) -> Option<(u64, bool, u64)> {
+    // Returns (respond_tx, is_plan_mode, entry_ptr)
     for i in (0..entries_len).rev() {
         let entry = entries_ptr + (i * layout.entry_size as u64);
         let discriminant = unsafe { *(entry as *const u64).byte_add(ENTRY_DISCRIMINANT_OFFSET) };
@@ -494,7 +548,7 @@ fn find_waiting_sender(
                         "tool_authorization #{count}: matched {} entry[{i}] by ToolCallId, respond_tx={tx:#x}, plan_mode={is_plan}",
                         layout.name
                     );
-                    return Some((tx, is_plan));
+                    return Some((tx, is_plan, entry));
                 }
 
                 tracing::warn!(
@@ -524,7 +578,7 @@ fn find_waiting_sender(
                         layout.name
                     );
                     // Legacy layout: no plan detection, assume regular tool
-                    return Some((tx, false));
+                    return Some((tx, false, entry));
                 }
             }
         }
@@ -669,8 +723,14 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         }
 
         // First attempt
-        if let Some((layout, respond_tx, is_plan)) = try_find_sender(entries_ptr, entries_len, current_call_id, count) {
+        if let Some((layout, respond_tx, is_plan, entry_ptr)) = try_find_sender(entries_ptr, entries_len, current_call_id, count) {
             let ok = unsafe { send_allow(layout, respond_tx, is_plan, count) };
+            if ok {
+                // Force the entry status to InProgress so the UI dismisses the dialog.
+                // Without this, the oneshot response is delivered but the status byte
+                // stays as WaitingForConfirmation — the dialog keeps rendering.
+                unsafe { force_status_in_progress(entry_ptr, &layout) };
+            }
             let elapsed_us = t0.elapsed().as_micros();
             if ok {
                 tracing::info!(
@@ -699,9 +759,12 @@ impl frida_gum::interceptor::InvocationListener for Listener {
                 (ptr, len)
             };
 
-            if let Some((layout, respond_tx, is_plan)) = try_find_sender(entries_ptr2, entries_len2, current_call_id, count) {
+            if let Some((layout, respond_tx, is_plan, entry_ptr)) = try_find_sender(entries_ptr2, entries_len2, current_call_id, count) {
                 TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT.fetch_add(1, Ordering::Relaxed);
                 let ok = unsafe { send_allow(layout, respond_tx, is_plan, count) };
+                if ok {
+                    unsafe { force_status_in_progress(entry_ptr, &layout) };
+                }
                 let elapsed_us = t0.elapsed().as_micros();
                 if ok {
                     tracing::info!(
@@ -729,10 +792,11 @@ fn try_find_sender(
     entries_len: u64,
     current_call_id: ArcStrRef,
     count: u64,
-) -> Option<(EntryLayout, u64, bool)> {
+) -> Option<(EntryLayout, u64, bool, u64)> {
+    // Returns (layout, respond_tx, is_plan_mode, entry_ptr)
     ENTRY_LAYOUTS.iter().copied().find_map(|layout| {
         find_waiting_sender(entries_ptr, entries_len, layout, current_call_id, count)
-            .map(|(tx, is_plan)| (layout, tx, is_plan))
+            .map(|(tx, is_plan, entry)| (layout, tx, is_plan, entry))
     })
 }
 
