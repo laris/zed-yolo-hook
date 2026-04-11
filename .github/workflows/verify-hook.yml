@@ -91,8 +91,7 @@ jobs:
       - name: Install insert-dylib
         run: |
           if [ ! -f target/tools/bin/insert-dylib ]; then
-            cargo install --git https://github.com/nicokoch/insert-dylib \
-              --root target/tools
+            cargo install insert-dylib --root target/tools
           fi
 
       - name: Inject dylib

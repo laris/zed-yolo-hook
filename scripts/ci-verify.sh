@@ -140,8 +140,7 @@ INSERT_DYLIB="$TOOLS_DIR/insert-dylib"
 if [ ! -f "$INSERT_DYLIB" ]; then
     echo "Building insert-dylib..."
     mkdir -p "$TOOLS_DIR"
-    cargo install --git https://github.com/nicokoch/insert-dylib \
-        --root "target/tools" 2>&1
+    cargo install insert-dylib --root "target/tools" 2>&1
 fi
 
 # Backup original
