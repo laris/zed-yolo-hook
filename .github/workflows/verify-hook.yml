@@ -103,8 +103,8 @@ jobs:
           cp "$ZED_BIN" "$ZED_BIN.original"
 
           # Inject
-          target/tools/bin/insert-dylib --weak --strip-codesig --all-yes \
-            "$DYLIB" "$ZED_BIN" "$ZED_BIN"
+          target/tools/bin/insert-dylib --weak --strip-codesig --all-yes --inplace \
+            "$DYLIB" "$ZED_BIN"
 
           # Sign
           codesign -fs - --deep "/Applications/Zed Preview.app"
