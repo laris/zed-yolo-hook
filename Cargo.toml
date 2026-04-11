@@ -40,7 +40,7 @@ serde_json = "1"
 dirs = "6"
 
 # Shared hook registry for multi-hook coordination
-dylib-hook-registry = { path = "/Users/lqiao/dev/codes/dylib-kit/crates/dylib-hook-registry" }
+dylib-hook-registry = { git = "https://github.com/laris/dylib-kit" }
 
 [profile.release]
 strip = true          # Remove debug symbols + symbol table

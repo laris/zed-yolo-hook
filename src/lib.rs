@@ -155,6 +155,32 @@ fn init_inner() {
     }
 
     // -----------------------------------------------------------------------
+    // Hook 5: push_entry — catch-all for AcpThread registration
+    // -----------------------------------------------------------------------
+    // push_entry is the lowest-level entry insertion, called by ALL code paths
+    // including direct session restore from workspace DB. This ensures the stale
+    // scanner knows about AcpThread instances even when upsert_tool_call_inner
+    // and handle_session_update are never called (e.g., restored external ACP
+    // sessions before the server reconnects).
+    if let Some((name, ptr)) = symbols::find_by_pattern(
+        &main_module,
+        hooks::push_entry_hook::SYMBOL_INCLUDE,
+        hooks::push_entry_hook::SYMBOL_EXCLUDE,
+    ) {
+        tracing::info!("push_entry_hook: Found {} at {:?}", name, ptr);
+        let mut listener = hooks::push_entry_hook::Listener;
+        match interceptor.attach(ptr, &mut listener) {
+            Ok(_) => {
+                std::mem::forget(listener);
+                tracing::info!("push_entry_hook: hook installed (catch-all registration)");
+            }
+            Err(e) => tracing::error!("push_entry_hook: attach failed: {:?}", e),
+        }
+    } else {
+        tracing::warn!("push_entry_hook: push_entry symbol not found");
+    }
+
+    // -----------------------------------------------------------------------
     // Approach 3: Periodic stale scanner thread
     // -----------------------------------------------------------------------
     // Scanner interval: 2 seconds (much longer than the per-call retry_delay_us)

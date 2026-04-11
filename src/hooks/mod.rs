@@ -5,11 +5,13 @@
 //!   - `tool_authorization`    — hooks `request_tool_call_authorization` (ACP agents, primary)
 //!   - `upsert_hook`           — hooks `upsert_tool_call_inner` (approach 1: catch all insertions)
 //!   - `session_update_hook`   — hooks `handle_session_update` (approach 2: catch session restore)
+//!   - `push_entry_hook`       — hooks `push_entry` (catch-all: every entry insertion path)
 //!   - `stale_scanner`         — periodic background scan (approach 3: catch stale entries)
 //!   - `entry_scanner`         — shared scanning logic used by approaches 1-3
 
 pub mod entry_scanner;
 pub mod permission_decision;
+pub mod push_entry_hook;
 pub mod session_update_hook;
 pub mod stale_scanner;
 pub mod tool_authorization;

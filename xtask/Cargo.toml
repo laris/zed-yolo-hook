@@ -6,5 +6,5 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-dylib-patcher = { path = "/Users/lqiao/dev/codes/dylib-kit/crates/dylib-patcher" }
-dylib-hook-registry = { path = "/Users/lqiao/dev/codes/dylib-kit/crates/dylib-hook-registry" }
+dylib-patcher = { git = "https://github.com/laris/dylib-kit" }
+dylib-hook-registry = { git = "https://github.com/laris/dylib-kit" }

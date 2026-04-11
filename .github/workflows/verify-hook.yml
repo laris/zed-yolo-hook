@@ -1,0 +1,206 @@
+name: Verify Hook
+
+on:
+  workflow_dispatch:
+    inputs:
+      zed_version:
+        description: 'Zed Preview tag (e.g., v0.232.0-pre). Leave empty for latest.'
+        required: false
+        type: string
+  schedule:
+    # Run weekly on Monday at 08:00 UTC (catch weekend Zed releases)
+    - cron: '0 8 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+jobs:
+  verify:
+    name: Verify hook against Zed Preview
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-macos-arm64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-macos-arm64-
+
+      - name: Resolve Zed Preview version
+        id: zed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.zed_version }}"
+          if [ -z "$TAG" ]; then
+            echo "Finding latest pre-release..."
+            TAG=$(gh release list -R zed-industries/zed --limit 20 \
+              | grep -i "pre-release" \
+              | head -1 \
+              | awk '{print $1}')
+          fi
+          VERSION="${TAG#v}"
+          VERSION="${VERSION%-pre}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Zed Preview: $TAG (version $VERSION)"
+
+      - name: Download Zed Preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ steps.zed.outputs.tag }}" \
+            -R zed-industries/zed \
+            -p "Zed-aarch64.dmg" \
+            -D /tmp
+
+      - name: Install Zed Preview
+        run: |
+          hdiutil attach /tmp/Zed-aarch64.dmg -nobrowse -quiet
+          MOUNT=$(find /Volumes -maxdepth 1 -name "Zed*" -type d | head -1)
+          if [ -z "$MOUNT" ]; then
+            echo "::error::Could not find mounted Zed volume"
+            exit 1
+          fi
+          cp -R "$MOUNT/Zed Preview.app" "/Applications/Zed Preview.app"
+          hdiutil detach "$MOUNT" -quiet || true
+          echo "Installed: $(file "/Applications/Zed Preview.app/Contents/MacOS/zed")"
+
+      - name: Build hook
+        run: cargo build --release -p zed-yolo-hook 2>&1
+
+      - name: Install insert-dylib
+        run: |
+          if [ ! -f target/tools/bin/insert-dylib ]; then
+            cargo install --git https://github.com/nicokoch/insert-dylib \
+              --root target/tools
+          fi
+
+      - name: Inject dylib
+        run: |
+          ZED_BIN="/Applications/Zed Preview.app/Contents/MacOS/zed"
+          DYLIB="$(pwd)/target/release/libzed_yolo_hook.dylib"
+
+          # Backup
+          cp "$ZED_BIN" "$ZED_BIN.original"
+
+          # Inject
+          target/tools/bin/insert-dylib --weak --strip-codesig --all-yes \
+            "$DYLIB" "$ZED_BIN" "$ZED_BIN"
+
+          # Sign
+          codesign -fs - --deep "/Applications/Zed Preview.app"
+
+          # Verify
+          otool -L "$ZED_BIN" | grep libzed_yolo_hook || {
+            echo "::error::Dylib not found after injection"
+            exit 1
+          }
+
+      - name: Launch and verify
+        id: verify
+        run: |
+          LOG_DIR="$HOME/Library/Logs/Zed"
+          mkdir -p "$LOG_DIR"
+          rm -f "$LOG_DIR"/zed-yolo-hook.*.log 2>/dev/null || true
+
+          export ZED_YOLO_MODE="allow_all"
+          export ZED_YOLO_LOG="debug"
+
+          echo "Launching Zed Preview..."
+          open "/Applications/Zed Preview.app"
+
+          # Wait for log
+          TIMEOUT=30
+          ELAPSED=0
+          LOG_FILE=""
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            LOG_FILE=$(ls -t "$LOG_DIR"/zed-yolo-hook.*.log 2>/dev/null | head -1 || true)
+            if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
+              # Check if key markers present
+              if grep -q "YOLO mode ACTIVE" "$LOG_FILE" 2>/dev/null; then
+                break
+              fi
+            fi
+            sleep 1
+            ELAPSED=$((ELAPSED + 1))
+          done
+
+          PASS=true
+
+          # Check success markers
+          for marker in "=== zed-yolo-hook v" "YOLO mode ACTIVE"; do
+            if [ -n "$LOG_FILE" ] && grep -q "$marker" "$LOG_FILE" 2>/dev/null; then
+              echo "PASS: $marker"
+            else
+              echo "::error::Missing marker: $marker"
+              PASS=false
+            fi
+          done
+
+          # Check failure markers
+          for marker in "Cannot find" "attach failed"; do
+            if [ -n "$LOG_FILE" ] && grep -q "$marker" "$LOG_FILE" 2>/dev/null; then
+              echo "::error::Found failure marker: $marker"
+              PASS=false
+            fi
+          done
+
+          # Kill Zed
+          pkill -f "Zed Preview" 2>/dev/null || true
+          sleep 2
+
+          # Output log
+          if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
+            echo "--- Hook Log ---"
+            cat "$LOG_FILE"
+            echo "--- End Log ---"
+          fi
+
+          if $PASS; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Upload hook log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook-log-${{ steps.zed.outputs.version }}
+          path: ~/Library/Logs/Zed/zed-yolo-hook.*.log
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Hook Verification: ${{ steps.verify.outputs.result == 'pass' && 'PASSED' || 'FAILED' }}
+
+          | Field | Value |
+          |-------|-------|
+          | Zed Preview | ${{ steps.zed.outputs.tag }} |
+          | Version | ${{ steps.zed.outputs.version }} |
+          | Runner | \`$(uname -m)\` / macOS \`$(sw_vers -productVersion)\` |
+          | Result | ${{ steps.verify.outputs.result == 'pass' && 'PASS' || 'FAIL' }} |
+          EOF
