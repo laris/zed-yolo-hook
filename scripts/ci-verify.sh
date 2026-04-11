@@ -150,8 +150,8 @@ cp "$ZED_BINARY" "$ZED_BINARY.original"
 DYLIB_ABS=$(cd "$(dirname "$DYLIB_PATH")" && pwd)/$(basename "$DYLIB_PATH")
 
 echo "Injecting $DYLIB_ABS → $ZED_BINARY"
-"$INSERT_DYLIB" --weak --strip-codesig --all-yes \
-    "$DYLIB_ABS" "$ZED_BINARY" "$ZED_BINARY"
+"$INSERT_DYLIB" --weak --strip-codesig --all-yes --inplace \
+    "$DYLIB_ABS" "$ZED_BINARY"
 
 # Re-sign
 echo "Ad-hoc codesigning..."
