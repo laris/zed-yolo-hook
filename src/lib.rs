@@ -193,11 +193,11 @@ fn init_inner() {
 }
 
 /// Register this hook in the shared dylib-hook-registry.
+///
+/// Uses `locked_register` to avoid race conditions when multiple Zed processes
+/// load their `#[ctor]` functions concurrently.
 fn register_in_registry(app_id: &str, mode: YoloMode) {
     use dylib_hook_registry::{HookEntry, HookRegistry};
-
-    let mut registry = HookRegistry::load(app_id).unwrap_or_default();
-    registry.app_id = Some(app_id.to_string());
 
     let dylib_path = format!(
         "{}/target/release/libzed_yolo_hook.dylib",
@@ -223,11 +223,8 @@ fn register_in_registry(app_id: &str, mode: YoloMode) {
         "Auto-approve ACP agent tool calls",
     );
 
-    registry.register(entry);
-
-    if let Err(e) = registry.save(app_id) {
-        tracing::debug!("Could not save hook registry: {} (non-fatal)", e);
-    } else {
-        tracing::info!("Registered in hook registry (app_id={})", app_id);
+    match HookRegistry::locked_register(app_id, entry) {
+        Ok(()) => tracing::info!("Registered in hook registry (app_id={})", app_id),
+        Err(e) => tracing::debug!("Could not save hook registry: {} (non-fatal)", e),
     }
 }
