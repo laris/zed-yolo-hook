@@ -20,9 +20,12 @@
 //! option_id from the WaitingForConfirmation entry. If it looks like a mode name
 //! (not "allow"/"allow_always"/"reject"), we send the configured `plan_option`.
 //!
-//! ## Memory layout (from disassembly of Zed Preview v0.230.0 aarch64):
-//!   AcpThread + 0x90 = entries.ptr
-//!   AcpThread + 0x98 = entries.len
+//! ## Memory layout (from disassembly of Zed Preview v0.233.0 aarch64):
+//!   AcpThread + 0xb0 = entries.ptr
+//!   AcpThread + 0xb8 = entries.len
+//!   (v0.228.x–v0.232.0 used 0x90 / 0x98; shifted by 0x20 in v0.233.0 because
+//!    the new `cost: Option<SessionCost>` field on AcpThread caused Rust's
+//!    `repr(Rust)` field reordering to relocate the Vec<AgentThreadEntry>.)
 //!   Each entry = 0x1c0 (448) bytes
 //!   entry[0x00] = AgentThreadEntry discriminant (0x2 = ToolCall)
 //!   entry[0x118] = ToolCallStatus payload head
@@ -47,9 +50,11 @@ use super::{
 use crate::config::{PlanOption, ToolOption};
 use crate::CONFIG;
 
-// ---- AcpThread offsets (stable across v0.228.x -> v0.230.0) ----
-const ENTRIES_PTR_OFFSET: usize = 0x90; // Vec<AgentThreadEntry>.ptr
-const ENTRIES_LEN_OFFSET: usize = 0x98; // Vec<AgentThreadEntry>.len
+// ---- AcpThread offsets ----
+// v0.233.0: 0xb0/0xb8 (repr(Rust) reordering from new `cost` field)
+// v0.228.x–v0.232.0: was 0x90/0x98
+const ENTRIES_PTR_OFFSET: usize = 0xb0; // Vec<AgentThreadEntry>.ptr
+const ENTRIES_LEN_OFFSET: usize = 0xb8; // Vec<AgentThreadEntry>.len
 const ENTRY_DISCRIMINANT_OFFSET: usize = 0x00; // AgentThreadEntry variant tag
 const ARC_INNER_DATA_OFFSET: usize = 0x10; // ArcInner<T> header = strong + weak
 const TOOL_CALL_UPDATE_ID_PTR_OFFSET_V230: usize = 0x128; // ToolCallUpdate.tool_call_id.ptr

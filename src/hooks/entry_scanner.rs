@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::tool_authorization;
 
-// Re-export layout constants from tool_authorization
-pub(crate) const ENTRIES_PTR_OFFSET: usize = 0x90;
-pub(crate) const ENTRIES_LEN_OFFSET: usize = 0x98;
+// Re-export layout constants from tool_authorization (v0.233.0)
+pub(crate) const ENTRIES_PTR_OFFSET: usize = 0xb0;
+pub(crate) const ENTRIES_LEN_OFFSET: usize = 0xb8;
 
 /// Tracks all AcpThread pointers we've seen, for periodic scanning.
 /// Written by register_thread (from interceptor context via atomic CAS-style),
