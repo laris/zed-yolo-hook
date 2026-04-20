@@ -12,10 +12,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Frida-gum for function interception (git main for Frida 17.7.3 support)
-frida-gum = { git = "https://github.com/frida/frida-rust", features = ["auto-download", "invocation-listener"] }
+frida-gum = { git = "https://github.com/frida/frida-rust", features = ["invocation-listener"] }
 
 # Match Zed Preview 0.230.0's ACP protocol types when synthesizing approvals.
-agent-client-protocol = "=0.10.2"
+agent-client-protocol = "=0.10.4"
 
 # Constructor attribute — runs on dylib load
 ctor = "0.6"

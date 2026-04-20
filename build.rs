@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Frida version to use (must match FRIDA_VERSION in frida-gum-sys checkout).
-const FRIDA_VERSION: &str = "17.7.3";
+const FRIDA_VERSION: &str = "17.9.1";
 const DEVKIT_NAME: &str = "frida-gum-devkit";
 const DEVKIT_ARCH: &str = "macos-arm64";
 
