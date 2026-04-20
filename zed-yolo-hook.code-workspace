@@ -2,6 +2,12 @@
   "folders": [
     {
       "path": "."
+    },
+    {
+      "path": "../dylib-kit"
+    },
+    {
+      "path": "../zed-project-workspace"
     }
   ]
 }
