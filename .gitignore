@@ -30,3 +30,9 @@ mcp-fast-ctx-usage.md
 *.log
 *.log.*
 *.tmp
+
+# Built dylib (rebuild via `cargo build --release` — symlink target only)
+/libzed_yolo_hook.dylib
+
+# Personal multi-folder workspace files (user-local, contain absolute paths)
+/gh-zed-industries__zed.code-workspace
