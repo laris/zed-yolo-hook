@@ -224,13 +224,16 @@ Remote-server:
 5. Open an SSH remote project and verify logs say the bundled enhanced remote
    server was used.
 
-2026-05-06 CNB verification in progress:
+2026-05-06 CNB verification:
 
 - Release tag `zed-yolo-v1.1.5-pre-enhanced` exists on commit `3fac531663`.
 - Release id: `2052006239594655744`.
 - Workspace-CPU pipeline `cnb-j6o-1jnul23ub-001` uses 16 CPU / 32 GiB.
 - `build-aarch64-apple-darwin-zed-cli` and
   `package-aarch64-apple-darwin-zed-cli` succeeded.
-- Current remaining checks are GNU remote_server, musl remote_server, release
-  attachment upload, local app resource copy, app re-sign, and SSH
-  remote-server selection verification.
+- GNU and musl x86_64 Linux `remote_server` builds succeeded.
+- Release upload succeeded with 13 assets, including both direct bundled
+  remote-server gzip files.
+- Local app resource copy and ad-hoc re-sign succeeded.
+- Remaining manual check: open an SSH remote project and verify the log line
+  `using bundled enhanced zed-remote-server...`.
