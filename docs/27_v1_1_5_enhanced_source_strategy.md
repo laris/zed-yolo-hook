@@ -15,9 +15,19 @@
 - `https://cnb.cool/lary.me/zed-upstream` is not a bit-for-bit mirror branch:
   it intentionally carries one `.cnb.yml` commit on top of GitHub `main` so CNB
   can keep pulling from GitHub server-side with `tencentcom/git-sync`.
+- 2026-05-06 21:xx CST mirror check: GitHub `main` was
+  `65107c90b10d2719b4739277ed5c06612d3180a4`; CNB `zed-upstream/main` was
+  advanced to `39e5313889aa3adfbfc207e6a2a217212010689d`, a merge commit that
+  preserves CNB's `.cnb.yml` bootstrap commit while incorporating that GitHub
+  head. Tag `v1.1.5-pre` remains
+  `0ba798cfbe4b8bfae0c5eae60a7399eb9c8780bc`.
 - `https://cnb.cool/lary.me/zed-yolo` is the enhanced fork. The branch should be
   treated as the single integration branch for local macOS builds and CNB
   workspace builds.
+- 2026-05-06 21:xx CST fork check: local
+  `v1.1.5-pre-enhanced` and CNB `v1.1.5-pre-enhanced` both point to
+  `3fac5316630b0d2dd9ffdb3f32d687234d6253fc`. No local or CNB
+  `v1.1.4-pre-enhanced` branch remains after pruning.
 
 Natural squash groups if the branch is rewritten later:
 
@@ -192,6 +202,19 @@ Local macOS:
 6. Confirm About title shows `Zed Preview 1.1.5 Enhanced`.
 7. Confirm an ACP permission request is auto-approved with default settings.
 
+2026-05-06 local verification at commit `3fac531663`:
+
+- `cargo fmt` passed.
+- `cargo check --package workspace --package settings_content` passed.
+- `ZED_BUNDLE=true ZED_RELEASE_CHANNEL=preview cargo build --release --package zed --package cli --target aarch64-apple-darwin --features gpui_platform/runtime_shaders`
+  passed on local macOS.
+- Test app:
+  `/private/tmp/zed-yolo-app-test-3fac531-202413/Zed Preview.app`.
+- `file` reports arm64 Mach-O for `zed` and `cli`.
+- `cli --version` reports `Zed 1.1.5`.
+- `script/check-macho-dylibs.py` reports no duplicate dylib load commands for
+  both `zed` and `cli`.
+
 Remote-server:
 
 1. CNB builds `zed-remote-server-linux-x86_64-gnu.gz`.
@@ -200,3 +223,14 @@ Remote-server:
 4. Set `ZED_ENHANCED_REMOTE_SERVER_REQUIRED=1` for a negative test.
 5. Open an SSH remote project and verify logs say the bundled enhanced remote
    server was used.
+
+2026-05-06 CNB verification in progress:
+
+- Release tag `zed-yolo-v1.1.5-pre-enhanced` exists on commit `3fac531663`.
+- Release id: `2052006239594655744`.
+- Workspace-CPU pipeline `cnb-j6o-1jnul23ub-001` uses 16 CPU / 32 GiB.
+- `build-aarch64-apple-darwin-zed-cli` and
+  `package-aarch64-apple-darwin-zed-cli` succeeded.
+- Current remaining checks are GNU remote_server, musl remote_server, release
+  attachment upload, local app resource copy, app re-sign, and SSH
+  remote-server selection verification.
