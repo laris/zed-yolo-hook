@@ -167,6 +167,19 @@ This should be a separate patch series from the YOLO and remote-server work.
 It has higher persistence risk and needs dedicated tests against the workspace
 DB.
 
+Implementation checkpoint:
+
+- `3fac531663` adds the settings/schema scaffold in the Zed fork:
+  `project_manager.enabled`, `code_workspace_sync`,
+  `auto_create_code_workspace`, `pin_primary_root`,
+  `reconcile_external_file_edits`, `write_sidecars_on_divergence`,
+  `auto_expand_partial_open`, and `migrate_on_primary_rename`.
+- The master switch defaults to `false`; the commit is intentionally inert and
+  does not yet read or write Zed's workspace DB or `.code-workspace` files.
+- This gives the later source-native project-manager patch a stable config
+  surface without mixing persistence behavior into the current YOLO /
+  remote-server build.
+
 ## 6. Verification Checklist
 
 Local macOS:
@@ -187,4 +200,3 @@ Remote-server:
 4. Set `ZED_ENHANCED_REMOTE_SERVER_REQUIRED=1` for a negative test.
 5. Open an SSH remote project and verify logs say the bundled enhanced remote
    server was used.
-
