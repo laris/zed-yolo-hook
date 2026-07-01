@@ -17,6 +17,7 @@ mod config;
 mod ffi;
 mod hooks;
 mod logging;
+mod process_role;
 mod symbols;
 
 pub use config::{PlanOption, ToolOption, YoloConfig, YoloMode};
@@ -37,6 +38,34 @@ fn init() {
 }
 
 fn init_inner() {
+    // Helper-process short-circuit (mirrors zed-prj-workspace-hook 2ee696e).
+    //
+    // Every Zed sub-process inherits this dylib because we patch
+    // `MacOS/zed` itself. None of them benefit from the YOLO machinery —
+    // the auto-approve hooks only fire in the primary UI process where
+    // the user sees tool-permission prompts. On Zed v1.1.2 the per-launch
+    // helper count grew to ~9-10, and running the full ctor in each one
+    // caused ~53s startup hangs as helpers serialised on dyld + the
+    // file-backed registry mutex (`HookRegistry::locked_register`).
+    //
+    // See `process_role::detect` for the heuristic and edge cases (all
+    // fail open as Primary).
+    let role = process_role::detect();
+    if role.is_helper() {
+        // Stay microscopic: no tracing-appender, no file I/O, no Frida.
+        // Stderr write is harmless if no terminal is attached.
+        let _ = std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!(
+                "zed-yolo-hook: helper process pid={} ppid={} — skipping full init\n",
+                std::process::id(),
+                unsafe { libc::getppid() },
+            )
+            .as_bytes(),
+        );
+        return;
+    }
+
     let app_id = config::detect_app_id();
     let cfg = YoloConfig::load(&app_id);
 
@@ -44,8 +73,16 @@ fn init_inner() {
 
     let pid = unsafe { libc::getpid() };
     tracing::info!("=== zed-yolo-hook v{} ===", env!("CARGO_PKG_VERSION"));
-    tracing::info!("config: mode={:?}, tool_option={:?}, plan_option={:?}, retry_delay_us={}",
-        cfg.mode, cfg.tool_option, cfg.plan_option, cfg.retry_delay_us);
+    tracing::info!(
+        "DIAGNOSTIC: role={:?} ppid={} pid={} mode={:?} tool_option={:?} plan_option={:?} retry_delay_us={}",
+        role,
+        unsafe { libc::getppid() },
+        pid,
+        cfg.mode,
+        cfg.tool_option,
+        cfg.plan_option,
+        cfg.retry_delay_us
+    );
 
     if let Some(path) = config::config_path(&app_id) {
         tracing::info!("config file: {}", path.display());
