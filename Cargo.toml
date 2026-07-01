@@ -48,13 +48,3 @@ lto = true            # Link-time optimization — eliminates dead code across c
 codegen-units = 1     # Single codegen unit — better optimization, slower compile
 opt-level = "z"       # Optimize for size (smallest binary)
 panic = "abort"       # No unwinding tables — saves ~30KB
-
-# Local override pointing at the dylib-kit working copy so we pick up
-# fixes ahead of the upstream push (e.g., the 2026-04-25 fix to
-# `Patcher::list_injected` matching `, weak)` instead of `(weak)` —
-# without this override, `cargo patch list` shows an empty injected-hooks
-# section even when the dylibs are correctly loaded). Remove this block
-# once the dylib-kit fix is pushed and `cargo update -p dylib-patcher`
-# can pull it from git.
-[patch."https://github.com/laris/dylib-kit"]
-dylib-hook-registry = { path = "../dylib-kit/crates/dylib-hook-registry" }
