@@ -28,8 +28,8 @@ static THREAD_PTRS: [AtomicU64; MAX_THREADS] = {
 };
 static THREAD_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Tracks entry indices we've already attempted, to avoid infinite retries.
-/// Only accessed from the stale_scanner thread via thread_local.
+// Tracks entry indices we've already attempted, to avoid infinite retries.
+// Only accessed from the stale_scanner thread via thread_local.
 thread_local! {
     static SCANNER_ATTEMPTED: std::cell::RefCell<HashSet<(u64, u64)>> =
         std::cell::RefCell::new(HashSet::new());

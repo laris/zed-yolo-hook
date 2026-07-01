@@ -101,13 +101,13 @@ fn find_frida_gum_sys_dir() -> Option<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(&git_checkouts) {
         for entry in entries.flatten() {
             let name = entry.file_name();
-            if name.to_string_lossy().starts_with("frida-rust-") {
-                if let Ok(revs) = std::fs::read_dir(entry.path()) {
-                    for rev in revs.flatten() {
-                        let sys_dir = rev.path().join("frida-gum-sys");
-                        if sys_dir.exists() {
-                            return Some(sys_dir);
-                        }
+            if name.to_string_lossy().starts_with("frida-rust-")
+                && let Ok(revs) = std::fs::read_dir(entry.path())
+            {
+                for rev in revs.flatten() {
+                    let sys_dir = rev.path().join("frida-gum-sys");
+                    if sys_dir.exists() {
+                        return Some(sys_dir);
                     }
                 }
             }
@@ -156,15 +156,14 @@ fn extract_tarball(tarball: &Path, dest: &Path) {
 /// Patch FRIDA_VERSION file to match the devkit we placed.
 fn patch_frida_version(frida_sys_dir: &Path) {
     let version_file = frida_sys_dir.join("FRIDA_VERSION");
-    if version_file.exists() {
-        if let Ok(current) = std::fs::read_to_string(&version_file) {
-            if current.trim() != FRIDA_VERSION {
-                let _ = std::fs::write(&version_file, FRIDA_VERSION);
-                println!(
-                    "cargo:warning=Patched FRIDA_VERSION: {} -> {FRIDA_VERSION}",
-                    current.trim()
-                );
-            }
-        }
+    if version_file.exists()
+        && let Ok(current) = std::fs::read_to_string(&version_file)
+        && current.trim() != FRIDA_VERSION
+    {
+        let _ = std::fs::write(&version_file, FRIDA_VERSION);
+        println!(
+            "cargo:warning=Patched FRIDA_VERSION: {} -> {FRIDA_VERSION}",
+            current.trim()
+        );
     }
 }

@@ -44,11 +44,10 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use super::{
-    TOOL_AUTHORIZATION_COUNT, TOOL_AUTHORIZATION_MISS_COUNT,
-    TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT,
+    TOOL_AUTHORIZATION_COUNT, TOOL_AUTHORIZATION_MISS_COUNT, TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT,
 };
-use crate::config::{PlanOption, ToolOption};
 use crate::CONFIG;
+use crate::config::{PlanOption, ToolOption};
 
 // ---- AcpThread offsets ----
 // v0.233.0: 0xb0/0xb8 (repr(Rust) reordering from new `cost` field)
@@ -230,10 +229,7 @@ unsafe fn arc_str_to_string(value: ArcStrRef) -> Option<String> {
     }
     let len = value.len as usize;
     let bytes = unsafe {
-        slice::from_raw_parts(
-            (value.ptr + ARC_INNER_DATA_OFFSET as u64) as *const u8,
-            len,
-        )
+        slice::from_raw_parts((value.ptr + ARC_INNER_DATA_OFFSET as u64) as *const u8, len)
     };
     std::str::from_utf8(bytes).ok().map(|s| s.to_string())
 }
@@ -322,7 +318,11 @@ unsafe fn send_allow_legacy(sender_arc_ptr: u64, count: u64) -> bool {
 ///
 /// # Safety
 /// `sender_arc_ptr` must point to a valid Arc<Inner<Sender<SelectedPermissionOutcome>>>.
-unsafe fn send_outcome(sender_arc_ptr: u64, outcome: SelectedPermissionOutcome, count: u64) -> bool {
+unsafe fn send_outcome(
+    sender_arc_ptr: u64,
+    outcome: SelectedPermissionOutcome,
+    count: u64,
+) -> bool {
     unsafe { bump_sender_refcount(sender_arc_ptr) };
 
     let sender: futures_channel::oneshot::Sender<SelectedPermissionOutcome> =
@@ -331,7 +331,9 @@ unsafe fn send_outcome(sender_arc_ptr: u64, outcome: SelectedPermissionOutcome, 
     let option_id_str = format!("{:?}", outcome.option_id);
     match sender.send(outcome) {
         Ok(()) => {
-            tracing::info!("tool_authorization #{count}: send succeeded (option_id={option_id_str})");
+            tracing::info!(
+                "tool_authorization #{count}: send succeeded (option_id={option_id_str})"
+            );
             true
         }
         Err(_) => {
@@ -341,14 +343,24 @@ unsafe fn send_outcome(sender_arc_ptr: u64, outcome: SelectedPermissionOutcome, 
     }
 }
 
-unsafe fn send_allow(layout: EntryLayout, sender_arc_ptr: u64, is_plan_mode: bool, count: u64) -> bool {
+unsafe fn send_allow(
+    layout: EntryLayout,
+    sender_arc_ptr: u64,
+    is_plan_mode: bool,
+    count: u64,
+) -> bool {
     match layout.send_style {
         SendStyle::LegacyOptionId => unsafe { send_allow_legacy(sender_arc_ptr, count) },
         SendStyle::SelectedOutcome => {
             let config = CONFIG.get();
             let outcome = if is_plan_mode {
-                let plan_opt = config.map(|c| c.plan_option).unwrap_or(PlanOption::AcceptEdits);
-                tracing::info!("tool_authorization #{count}: ExitPlanMode detected, plan_option={:?}", plan_opt);
+                let plan_opt = config
+                    .map(|c| c.plan_option)
+                    .unwrap_or(PlanOption::AcceptEdits);
+                tracing::info!(
+                    "tool_authorization #{count}: ExitPlanMode detected, plan_option={:?}",
+                    plan_opt
+                );
                 build_plan_outcome(plan_opt)
             } else {
                 let tool_opt = config.map(|c| c.tool_option).unwrap_or(ToolOption::Allow);
@@ -477,9 +489,7 @@ unsafe fn detect_plan_mode(entry: u64, layout: &EntryLayout, count: u64) -> bool
     let first_opt_id = unsafe { read_arc_str(vec_ptr, 0x00, 0x08) };
 
     if let Some(id_str) = unsafe { arc_str_to_string(first_opt_id) } {
-        tracing::debug!(
-            "tool_authorization #{count}: first option_id = \"{id_str}\""
-        );
+        tracing::debug!("tool_authorization #{count}: first option_id = \"{id_str}\"");
         // ExitPlanMode options: "bypassPermissions", "acceptEdits", "default", "plan"
         // Regular tool options: "allow_always", "allow", "reject"
         let is_plan = matches!(
@@ -594,12 +604,7 @@ fn find_waiting_sender(
 
 // ---- Diagnostics for missed approvals ----
 
-fn diagnose_miss(
-    entries_ptr: u64,
-    entries_len: u64,
-    current_call_id: ArcStrRef,
-    count: u64,
-) {
+fn diagnose_miss(entries_ptr: u64, entries_len: u64, current_call_id: ArcStrRef, count: u64) {
     // Collect diagnostic info about why the entry wasn't found
     let mut toolcall_count: u64 = 0;
     let mut id_matched_count: u64 = 0;
@@ -634,8 +639,8 @@ fn diagnose_miss(
         }
     }
 
-    let call_id_str = unsafe { arc_str_to_string(current_call_id) }
-        .unwrap_or_else(|| "<unreadable>".to_string());
+    let call_id_str =
+        unsafe { arc_str_to_string(current_call_id) }.unwrap_or_else(|| "<unreadable>".to_string());
 
     if id_matched_count > 0 {
         tracing::warn!(
@@ -692,8 +697,7 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         let session_tag = format!("{:04x}", self_ptr & 0xFFFF);
 
         // Read tool_call_id string for log correlation
-        let call_id_str = unsafe { arc_str_to_string(current_call_id) }
-            .unwrap_or_default();
+        let call_id_str = unsafe { arc_str_to_string(current_call_id) }.unwrap_or_default();
         // Truncate long IDs for log readability (tool_call_ids are often UUIDs)
         let call_id_short = if call_id_str.len() > 12 {
             &call_id_str[..12]
@@ -706,7 +710,9 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         );
 
         if self_ptr == 0 {
-            tracing::warn!("tool_authorization #{count} [s:{session_tag}]: self_ptr is null, skipping");
+            tracing::warn!(
+                "tool_authorization #{count} [s:{session_tag}]: self_ptr is null, skipping"
+            );
             return;
         }
 
@@ -728,7 +734,9 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         }
 
         // First attempt
-        if let Some((layout, respond_tx, is_plan, entry_ptr)) = try_find_sender(entries_ptr, entries_len, current_call_id, count) {
+        if let Some((layout, respond_tx, is_plan, entry_ptr)) =
+            try_find_sender(entries_ptr, entries_len, current_call_id, count)
+        {
             let ok = unsafe { send_allow(layout, respond_tx, is_plan, count) };
             if ok {
                 // Force the entry status to InProgress so the UI dismisses the dialog.
@@ -748,10 +756,7 @@ impl frida_gum::interceptor::InvocationListener for Listener {
         }
 
         // Single retry after configurable delay
-        let retry_delay = CONFIG
-            .get()
-            .map(|c| c.retry_delay_us)
-            .unwrap_or(1500);
+        let retry_delay = CONFIG.get().map(|c| c.retry_delay_us).unwrap_or(1500);
 
         if retry_delay > 0 {
             std::thread::sleep(std::time::Duration::from_micros(retry_delay));
@@ -764,7 +769,9 @@ impl frida_gum::interceptor::InvocationListener for Listener {
                 (ptr, len)
             };
 
-            if let Some((layout, respond_tx, is_plan, entry_ptr)) = try_find_sender(entries_ptr2, entries_len2, current_call_id, count) {
+            if let Some((layout, respond_tx, is_plan, entry_ptr)) =
+                try_find_sender(entries_ptr2, entries_len2, current_call_id, count)
+            {
                 TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT.fetch_add(1, Ordering::Relaxed);
                 let ok = unsafe { send_allow(layout, respond_tx, is_plan, count) };
                 if ok {
@@ -808,8 +815,7 @@ fn try_find_sender(
 fn log_stats(count: u64) {
     // Log summary stats every 50 approvals or on any miss
     if count % 50 == 0 {
-        let approved = count
-            - TOOL_AUTHORIZATION_MISS_COUNT.load(Ordering::Relaxed);
+        let approved = count - TOOL_AUTHORIZATION_MISS_COUNT.load(Ordering::Relaxed);
         let missed = TOOL_AUTHORIZATION_MISS_COUNT.load(Ordering::Relaxed);
         let retried = TOOL_AUTHORIZATION_RETRY_SUCCESS_COUNT.load(Ordering::Relaxed);
         tracing::info!(
@@ -833,7 +839,12 @@ pub(crate) unsafe fn detect_plan_mode_pub(entry: u64, layout: &EntryLayout) -> b
     unsafe { detect_plan_mode(entry, layout, 0) }
 }
 
-pub(crate) unsafe fn send_allow_pub(send_style: SendStyle, sender_arc_ptr: u64, is_plan: bool, count: u64) -> bool {
+pub(crate) unsafe fn send_allow_pub(
+    send_style: SendStyle,
+    sender_arc_ptr: u64,
+    is_plan: bool,
+    count: u64,
+) -> bool {
     // Create a minimal layout to pass to send_allow
     let layout = ENTRY_LAYOUTS[0]; // v0.230.x
     // Override send_style if needed

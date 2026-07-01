@@ -223,7 +223,9 @@ fn parse_tool_option(val: &str) -> Option<ToolOption> {
 fn parse_plan_option(val: &str) -> Option<PlanOption> {
     match val.trim().to_lowercase().as_str() {
         "acceptedits" | "accept_edits" => Some(PlanOption::AcceptEdits),
-        "bypasspermissions" | "bypass_permissions" | "bypass" => Some(PlanOption::BypassPermissions),
+        "bypasspermissions" | "bypass_permissions" | "bypass" => {
+            Some(PlanOption::BypassPermissions)
+        }
         "default" => Some(PlanOption::Default),
         "plan" => Some(PlanOption::Plan),
         _ => None,
@@ -297,15 +299,27 @@ mod tests {
     #[test]
     fn test_parse_tool_option() {
         assert_eq!(parse_tool_option("allow"), Some(ToolOption::Allow));
-        assert_eq!(parse_tool_option("allow_always"), Some(ToolOption::AllowAlways));
+        assert_eq!(
+            parse_tool_option("allow_always"),
+            Some(ToolOption::AllowAlways)
+        );
         assert_eq!(parse_tool_option("unknown"), None);
     }
 
     #[test]
     fn test_parse_plan_option() {
-        assert_eq!(parse_plan_option("acceptEdits"), Some(PlanOption::AcceptEdits));
-        assert_eq!(parse_plan_option("accept_edits"), Some(PlanOption::AcceptEdits));
-        assert_eq!(parse_plan_option("bypass"), Some(PlanOption::BypassPermissions));
+        assert_eq!(
+            parse_plan_option("acceptEdits"),
+            Some(PlanOption::AcceptEdits)
+        );
+        assert_eq!(
+            parse_plan_option("accept_edits"),
+            Some(PlanOption::AcceptEdits)
+        );
+        assert_eq!(
+            parse_plan_option("bypass"),
+            Some(PlanOption::BypassPermissions)
+        );
         assert_eq!(parse_plan_option("default"), Some(PlanOption::Default));
         assert_eq!(parse_plan_option("plan"), Some(PlanOption::Plan));
         assert_eq!(parse_plan_option("unknown"), None);

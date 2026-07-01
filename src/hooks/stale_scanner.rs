@@ -22,7 +22,10 @@ pub fn start(scan_interval_ms: u64) {
     std::thread::Builder::new()
         .name("yolo-stale-scanner".to_string())
         .spawn(move || {
-            tracing::info!("stale_scanner: started (interval={}ms)", interval.as_millis());
+            tracing::info!(
+                "stale_scanner: started (interval={}ms)",
+                interval.as_millis()
+            );
             // Initial delay — wait for Zed to fully initialize
             std::thread::sleep(Duration::from_secs(5));
 
